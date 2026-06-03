@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration><Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration><Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <ProjectGuid>{6F2E9C41-7B3A-4D5E-9A1C-1A2B3C4D5E6F}</ProjectGuid>
+    <RootNamespace>pocketplus</RootNamespace>
+    <Keyword>Win32Proj</Keyword>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <PlatformToolset>ClangCL</PlatformToolset>
+    <UseDebugLibraries Condition="'$(Configuration)' == 'Debug'">true</UseDebugLibraries>
+    <UseDebugLibraries Condition="'$(Configuration)' == 'Release'">false</UseDebugLibraries>
+    <WholeProgramOptimization Condition="'$(Configuration)' == 'Release'">true</WholeProgramOptimization>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <Import Project="$(MSBuildProjectDirectory)\..\build\Stainless.props" />
+
+  <PropertyGroup>
+    <OutDir>$(MSBuildProjectDirectory)\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(MSBuildProjectDirectory)\$(Platform)\$(Configuration)\obj\</IntDir>
+    <TargetName>pocketplus</TargetName>
+  </PropertyGroup>
+
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <CompileAs>CompileAsC</CompileAs>
+      <LanguageStandard_C>stdc11</LanguageStandard_C>
+      <WarningLevel>Level3</WarningLevel>
+      <AdditionalIncludeDirectories>$(MSBuildProjectDirectory)\generated;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>PP_BUILD_DLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <!-- Clang accepts C99 VLAs as an extension; silence the warning so /WX stays clean. -->
+      <AdditionalOptions>-Wno-vla-extension %(AdditionalOptions)</AdditionalOptions>
+      <Optimization Condition="'$(Configuration)' == 'Debug'">Disabled</Optimization>
+      <Optimization Condition="'$(Configuration)' == 'Release'">MaxSpeed</Optimization>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemGroup>
+    <ClCompile Include="generated\pocketplus.c" />
+    <ClCompile Include="src\pp_shim.c" />
+    <ClInclude Include="generated\pocketplus.h" />
+    <ClInclude Include="src\pp_shim.h" />
+  </ItemGroup>
+
+  <!-- Always show the Scala source in the project for convenience. -->
+  <ItemGroup>
+    <None Include="..\scala\PocketPlus.scala" />
+  </ItemGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Import Project="$(MSBuildProjectDirectory)\..\build\Stainless.targets" />
+</Project>

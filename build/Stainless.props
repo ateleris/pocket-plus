@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Shared paths/properties for Stainless GenC. Imported by native/pocketplus.vcxproj.
+     (Verification runs via pytest — python/tests/test_verify.py — not MSBuild.) -->
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <RepoRoot>$(MSBuildThisFileDirectory)..\</RepoRoot>
+    <StainlessDir>$(RepoRoot)tools\stainless\</StainlessDir>
+    <StainlessJar>$(StainlessDir)lib\stainless-dotty-standalone-0.9.9.3.jar</StainlessJar>
+    <ScalaSource>$(RepoRoot)scala\PocketPlus.scala</ScalaSource>
+    <GenCDir>$(RepoRoot)native\generated\</GenCDir>
+    <GenCSource>$(GenCDir)pocketplus.c</GenCSource>
+    <GenCHeader>$(GenCDir)pocketplus.h</GenCHeader>
+    <!-- Prefer JAVA_HOME; fall back to java on PATH. -->
+    <JavaExe Condition="'$(JAVA_HOME)'!=''">$(JAVA_HOME)\bin\java.exe</JavaExe>
+    <JavaExe Condition="'$(JAVA_HOME)'==''">java</JavaExe>
+    <!-- Deep extraction recursion needs a big stack; the unsafe-memory flag silences the JDK 23+
+         sun.misc.Unsafe deprecation warnings emitted by the Scala runtime. -->
+    <JvmArgs>-Xss512m --sun-misc-unsafe-memory-access=allow</JvmArgs>
+  </PropertyGroup>
+</Project>

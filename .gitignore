@@ -1,6 +1,39 @@
+# --- JVM / Scala scratch ---
 *.class
 *.tasty
 *.log
-
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
+
+# --- Visual Studio / build output ---
+.vs/
+native/x64/
+**/obj/
+*.dll
+*.lib
+*.exp
+*.pdb
+*.o
+*.obj
+*.ilk
+
+# --- GenC output (regenerated from scala/PocketPlus.scala on build) ---
+native/generated/pocketplus.c
+native/generated/pocketplus.h
+
+# --- Stainless verification artifacts ---
+build/.stainless-cache/
+# Coursier cache directory Stainless creates in the working dir when its cache location is unset
+null/
+
+# --- Python ---
+python/env/
+**/__pycache__/
+.pytest_cache/
+
+# --- Private test vectors (contents are NOT tracked) ---
+/data/*
+!/data/.gitkeep
+!/data/README.md
+/.stainless-cache
+/TestResults
