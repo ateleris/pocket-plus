@@ -1,5 +1,5 @@
-import stainless.lang._
-import stainless.annotation._
+import stainless.lang.*
+import stainless.annotation.*
 
 /**
  * POCKET+ / CCSDS 124.0-B-1 — Stainless implementation, written in the GenC-compatible
@@ -481,7 +481,7 @@ object Compressor {
   // ---- public API ----
 
   /** Initialises the state: zeroes every vector, resets counters, precomputes COUNT(n). */
-  @cCode.`export`
+  @cCode.`export` @cCode.noMangling
   def compressorInit(st: CompressorState): Unit = {
     BitOps.zeroFill(st.maskNew, st.n)
     BitOps.zeroFill(st.maskOld, st.n)
@@ -960,3 +960,13 @@ object Decompressor {
     start + roundUpToByte(cursor.pos - start)
   }
 }
+
+import stainless.io.*
+// Crude diagnostic that an executable on a machine ran 
+@cCode.`export`
+def main(): Int = {
+  given s : State = newState
+  StdOut.println("Main method of PocketPlus genc output executed successfully.")
+  0
+}
+
