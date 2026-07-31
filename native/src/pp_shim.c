@@ -3,8 +3,8 @@
 #include "pp_shim.h"
 #include "../generated/pocketplus.h"
 
-struct PPCompressor   { CompressorState_0 cs; };
-struct PPDecompressor { DecompressorState_0 ds; };
+struct PPCompressor   { CompressorState cs; };
+struct PPDecompressor { DecompressorState ds; };
 
 /* Allocate a zeroed bit buffer of length len (>=1 so calloc never gets 0). */
 static array_bool mk(int32_t len) {
@@ -24,33 +24,33 @@ PP_API PPCompressor* pp_compressor_create(int32_t n) {
     if (n < 1 || n > 65535) return NULL;
     PPCompressor* c = (PPCompressor*)calloc(1, sizeof(*c));
     if (!c) return NULL;
-    CompressorState_0* s = &c->cs;
-    s->n_0 = n;
-    s->maskNew_0      = mk(n);
-    s->maskOld_0      = mk(n);
-    s->maskBuildNew_0 = mk(n);
-    s->maskBuildOld_0 = mk(n);
-    s->inputOld_0     = mk(n);
-    s->inputVectorLengthCount_0 = mk(64);     /* COUNT(n) fits in <= 64 bits */
-    s->inputVectorLengthCountLen_0 = 0;
-    s->maskChangeVector_0 = mk(16 * n);        /* 16-deep history of length-n change vectors */
-    s->maskChangeCount_0 = 0;
-    s->maskFlagCount_0 = 0;                    /* maskFlag_0[16] is inline in the struct */
-    s->t_0 = 0;
+    CompressorState* s = &c->cs;
+    s->n = n;
+    s->maskNew      = mk(n);
+    s->maskOld      = mk(n);
+    s->maskBuildNew = mk(n);
+    s->maskBuildOld = mk(n);
+    s->inputOld     = mk(n);
+    s->inputVectorLengthCount = mk(64);     /* COUNT(n) fits in <= 64 bits */
+    s->inputVectorLengthCountLen = 0;
+    s->maskChangeVector = mk(16 * n);        /* 16-deep history of length-n change vectors */
+    s->maskChangeCount = 0;
+    s->maskFlagCount = 0;                    /* maskFlag[16] is inline in the struct */
+    s->t = 0;
     compressorInit(s);
     return c;
 }
 
 PP_API void pp_compressor_free(PPCompressor* c) {
     if (!c) return;
-    CompressorState_0* s = &c->cs;
-    free(s->maskNew_0.data);
-    free(s->maskOld_0.data);
-    free(s->maskBuildNew_0.data);
-    free(s->maskBuildOld_0.data);
-    free(s->inputOld_0.data);
-    free(s->inputVectorLengthCount_0.data);
-    free(s->maskChangeVector_0.data);
+    CompressorState* s = &c->cs;
+    free(s->maskNew.data);
+    free(s->maskOld.data);
+    free(s->maskBuildNew.data);
+    free(s->maskBuildOld.data);
+    free(s->inputOld.data);
+    free(s->inputVectorLengthCount.data);
+    free(s->maskChangeVector.data);
     free(c);
 }
 
@@ -67,7 +67,7 @@ PP_API int32_t pp_compress(PPCompressor* c, const bool* input, int32_t n,
                            bool sendMaskFlag, bool uncompressedFlag,
                            bool* out, int32_t out_cap) {
     if (!c || !input || !out) return -1;
-    if (n != c->cs.n_0) return -1;
+    if (n != c->cs.n) return -1;
     if (out_cap < pp_compress_output_capacity_bits(n)) return -1;
     array_bool in_;  in_.data = (bool*)input; in_.length = n;
     array_bool out_; out_.data = out;          out_.length = out_cap;
@@ -80,25 +80,25 @@ PP_API PPDecompressor* pp_decompressor_create(int32_t n) {
     if (n < 1 || n > 65535) return NULL;
     PPDecompressor* d = (PPDecompressor*)calloc(1, sizeof(*d));
     if (!d) return NULL;
-    d->ds.n_3 = n;
-    d->ds.mask_0      = mk(n);
-    d->ds.lastInput_0 = mk(n);
-    d->ds.t_3 = 0;
+    d->ds.n = n;
+    d->ds.mask      = mk(n);
+    d->ds.lastInput = mk(n);
+    d->ds.t = 0;
     decompressorInit(&d->ds);
     return d;
 }
 
 PP_API void pp_decompressor_free(PPDecompressor* d) {
     if (!d) return;
-    free(d->ds.mask_0.data);
-    free(d->ds.lastInput_0.data);
+    free(d->ds.mask.data);
+    free(d->ds.lastInput.data);
     free(d);
 }
 
 PP_API int32_t pp_decompress(PPDecompressor* d, const bool* stream, int32_t stream_len,
                              int32_t bitOffset, bool* out, int32_t n) {
     if (!d || !stream || !out) return -1;
-    if (n != d->ds.n_3) return -1;
+    if (n != d->ds.n) return -1;
     array_bool s; s.data = (bool*)stream; s.length = stream_len;
     array_bool o; o.data = out;           o.length = n;
     return decompress(&d->ds, s, bitOffset, o);

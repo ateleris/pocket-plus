@@ -15,7 +15,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(os.path.dirname(_HERE))  # pocketplus -> python -> repo root
 
 STAINLESS_DIR = os.path.join(_REPO, "tools", "stainless")
-JAR = os.path.join(STAINLESS_DIR, "lib", "stainless-dotty-standalone-0.9.9.3.jar")
+JAR = os.path.join(STAINLESS_DIR, "lib", "stainless-dotty-standalone-0.10.0.jar")
 SCALA = os.path.join(_REPO, "scala", "PocketPlus.scala")
 CACHE_DIR = os.path.join(_REPO, "build", ".stainless-cache")
 
