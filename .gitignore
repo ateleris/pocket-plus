@@ -21,6 +21,9 @@ native/x64/
 native/generated/pocketplus.c
 native/generated/pocketplus.h
 
+# --- Stainless distribution (downloaded by install.sh) ---
+/tools/stainless/
+
 # --- Stainless verification artifacts ---
 build/.stainless-cache/
 # Coursier cache directory Stainless creates in the working dir when its cache location is unset
