@@ -55,6 +55,16 @@ msbuild pocket-plus.slnx /t:Build /p:Configuration=Debug   # GenC → DLL → py
 cd python && env\Scripts\python -m pytest tests -m verify  # Stainless verification gate
 ```
 
+Outside a Developer prompt (e.g. on CI), use the PowerShell scripts instead — `build.ps1` locates
+MSBuild via `vswhere` and builds only the native project (no VS Python workload needed):
+
+```
+powershell -File install.ps1               # once, downloads tools/stainless (win build)
+powershell -File native\build.ps1          # GenC → native\x64\Release\pocketplus.dll
+python -m venv python\env && python\env\Scripts\pip install -r python\requirements.txt
+cd python && env\Scripts\python -m pytest -m "not verify"
+```
+
 ## Build / test (macOS / Linux)
 
 ```
