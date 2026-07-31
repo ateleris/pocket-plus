@@ -31,7 +31,8 @@ def run(timeout: int = 5, solvers: str = "smt-z3,smt-cvc5") -> dict:
     if not os.path.isfile(JAR):
         raise FileNotFoundError(f"Vendored Stainless jar not found: {JAR}")
 
-    java = os.path.join(os.environ["JAVA_HOME"], "bin", "java.exe") if os.environ.get("JAVA_HOME") else "java"
+    java_name = "java.exe" if os.name == "nt" else "java"
+    java = os.path.join(os.environ["JAVA_HOME"], "bin", java_name) if os.environ.get("JAVA_HOME") else "java"
     env = dict(os.environ)
     env["PATH"] = os.pathsep.join([
         os.path.join(STAINLESS_DIR, "z3"),

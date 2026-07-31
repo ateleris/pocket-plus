@@ -8,9 +8,18 @@ from __future__ import annotations
 import ctypes
 import glob
 import os
+import sys
 from ctypes import c_bool, c_int32, c_void_p, POINTER
 
 _BOOL_P = POINTER(c_bool)
+
+
+if sys.platform == "win32":
+    _LIB_NAME = "pocketplus.dll"
+elif sys.platform == "darwin":
+    _LIB_NAME = "libpocketplus.dylib"
+else:
+    _LIB_NAME = "libpocketplus.so"
 
 
 def _find_dll() -> str:
@@ -18,17 +27,20 @@ def _find_dll() -> str:
     repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     candidates = []
     if env:
-        candidates.append(os.path.join(env, "pocketplus.dll"))
-    # Prefer Debug, then Release, then any.
+        candidates.append(os.path.join(env, _LIB_NAME))
+    # MSBuild output (Windows): prefer Debug, then Release, then any.
     for cfg in ("Debug", "Release"):
-        candidates.append(os.path.join(repo, "native", "x64", cfg, "pocketplus.dll"))
-    candidates += glob.glob(os.path.join(repo, "native", "x64", "*", "pocketplus.dll"))
+        candidates.append(os.path.join(repo, "native", "x64", cfg, _LIB_NAME))
+    candidates += glob.glob(os.path.join(repo, "native", "x64", "*", _LIB_NAME))
+    # native/build.sh output (macOS/Linux).
+    candidates.append(os.path.join(repo, "native", "build", _LIB_NAME))
     for c in candidates:
         if c and os.path.isfile(c):
             return c
     raise FileNotFoundError(
-        "pocketplus.dll not found. Build the native project (Debug/Release) first, "
-        "or set POCKETPLUS_DLL_DIR. Searched:\n  " + "\n  ".join(candidates)
+        f"{_LIB_NAME} not found. Build the native library first (Visual Studio on Windows, "
+        "native/build.sh on macOS/Linux), or set POCKETPLUS_DLL_DIR. Searched:\n  "
+        + "\n  ".join(candidates)
     )
 
 

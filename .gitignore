@@ -8,6 +8,7 @@ hs_err_pid*
 # --- Visual Studio / build output ---
 .vs/
 native/x64/
+native/build/
 **/obj/
 *.dll
 *.lib

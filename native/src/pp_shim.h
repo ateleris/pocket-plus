@@ -11,10 +11,14 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#if defined(PP_BUILD_DLL)
-#  define PP_API __declspec(dllexport)
+#if defined(_WIN32)
+#  if defined(PP_BUILD_DLL)
+#    define PP_API __declspec(dllexport)
+#  else
+#    define PP_API __declspec(dllimport)
+#  endif
 #else
-#  define PP_API __declspec(dllimport)
+#  define PP_API __attribute__((visibility("default")))
 #endif
 
 #ifdef __cplusplus
