@@ -46,8 +46,15 @@ def run(timeout: int = 5, solvers: str = "smt-z3,smt-cvc5") -> dict:
            "--vc-cache=true", f"--cache-dir={CACHE_DIR}", SCALA]
 
     # cwd inside the (gitignored) cache dir so Stainless'/Coursier's stray "null" cache lands there.
-    proc = subprocess.run(cmd, env=env, cwd=CACHE_DIR, capture_output=True, text=True)
-    out = re.sub(r"\x1b\[[0-9;]*m", "", proc.stdout + proc.stderr)
+    # Stream output live (visible under pytest with -s) while also capturing it for parsing.
+    proc = subprocess.Popen(cmd, env=env, cwd=CACHE_DIR, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True)
+    captured = []
+    for line in proc.stdout:
+        print(line, end="", flush=True)
+        captured.append(line)
+    proc.wait()
+    out = re.sub(r"\x1b\[[0-9;]*m", "", "".join(captured))
     lines = [l for l in out.splitlines() if "WARNING" not in l]
 
     m = re.search(r"total:\s*(\d+).*?valid:\s*(\d+).*?invalid:\s*(\d+).*?unknown:\s*(\d+)",
