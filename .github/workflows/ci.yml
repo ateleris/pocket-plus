@@ -24,9 +24,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Cache for the verification step below; VC results are content-addressed,
-      # so a stale cache still speeds up re-runs.
+      # Cache for the verification step below (Linux-only, like that step); VC results
+      # are content-addressed, so a stale cache still speeds up re-runs.
       - uses: actions/cache@v4
+        if: runner.os == 'Linux'
         with:
           path: build/.stainless-cache
           key: stainless-vc-cache-${{ matrix.os }}-${{ hashFiles('scala/PocketPlus.scala') }}
@@ -63,9 +64,10 @@ jobs:
         working-directory: python
         run: pytest -m "not verify"
 
-      # Allowed to fail: the gate is red by design until verification invariants
-      # are added.
+      # Linux-only (verification is slow, and one OS gives enough signal). Allowed to
+      # fail: the gate is red by design until verification invariants are added.
       - name: Run Stainless verification gate
+        if: runner.os == 'Linux'
         continue-on-error: true
         working-directory: python
         run: pytest -m verify
