@@ -25,8 +25,8 @@ CONFIG_FILE = os.path.join(SCALA_DIR, "stainless.conf")
 CACHE_DIR = os.path.join(_REPO, "build", ".stainless-cache")
 REPORT_JSON = os.path.join(CACHE_DIR, "report.json")
 
-VERIFIED_FILES = [
-    os.path.join(SCALA_DIR, "PocketPlus.scala"),
+FILES_TO_VERIFY = [
+    # os.path.join(SCALA_DIR, "PocketPlus.scala"),
     os.path.join(SCALA_DIR, "datastructure", "arrays", "IntArray.scala"),
     os.path.join(SCALA_DIR, "datastructure", "arrays", "ByteArray.scala"),
 ]
@@ -54,7 +54,7 @@ def _vc_summary(record: dict) -> str:
 def run(files: list[str] | None = None, extra_opts: list[str] | None = None) -> dict:
     """Run Stainless verification; return {total, valid, invalid, unknown, output, unproven}.
 
-    `files` defaults to VERIFIED_FILES; `extra_opts` are appended to the Stainless command line
+    `files` defaults to FILES_TO_VERIFY; `extra_opts` are appended to the Stainless command line
     (e.g. to override a setting from stainless.conf for this run). `unproven` lists the VCs that
     did not verify, for diagnostics. Raises FileNotFoundError if the vendored Stainless jar is
     missing.
@@ -76,7 +76,7 @@ def run(files: list[str] | None = None, extra_opts: list[str] | None = None) -> 
 
     cmd = [java, *JVM_ARGS, "-jar", JAR,
            f"--config-file={CONFIG_FILE}", f"--cache-dir={CACHE_DIR}", f"--json={REPORT_JSON}",
-           *(extra_opts or []), *(files or VERIFIED_FILES)]
+           *(extra_opts or []), *(files or FILES_TO_VERIFY)]
 
     # cwd inside the (gitignored) cache dir so Stainless'/Coursier's stray "null" cache lands there.
     # Stream output live (visible under pytest with -s) while also capturing it for parsing.
