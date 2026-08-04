@@ -25,13 +25,16 @@ CONFIG_FILE = os.path.join(SCALA_DIR, "stainless.conf")
 CACHE_DIR = os.path.join(_REPO, "build", ".stainless-cache")
 REPORT_JSON = os.path.join(CACHE_DIR, "report.json")
 
+# Configuration for the stainless invocation; files to verify, JVM args
 FILES_TO_VERIFY = [
     # os.path.join(SCALA_DIR, "PocketPlus.scala"),
     os.path.join(SCALA_DIR, "datastructure", "arrays", "IntArray.scala"),
     os.path.join(SCALA_DIR, "datastructure", "arrays", "ByteArray.scala"),
 ]
+N_THREADS = 4
 
-JVM_ARGS = ["-Xss512m", "--sun-misc-unsafe-memory-access=allow"]
+
+JVM_ARGS = ["-Xss512m", "--sun-misc-unsafe-memory-access=allow", "-Dparallel={}".format(N_THREADS)]
 
 # VC statuses that count as proven; anything else (Invalid, Inconclusive) is unproven.
 _PASSING_STATUSES = {"Valid", "ValidFromCache", "Trivial"}
