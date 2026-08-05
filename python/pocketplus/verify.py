@@ -20,7 +20,7 @@ _REPO = os.path.dirname(os.path.dirname(_HERE))  # pocketplus -> python -> repo 
 
 SCALA_DIR = os.path.join(_REPO, "scala")
 STAINLESS_DIR = os.path.join(_REPO, "tools", "stainless")
-JAR = os.path.join(STAINLESS_DIR, "lib", "stainless-dotty-standalone-0.10.0.jar")
+JAR = os.path.join(STAINLESS_DIR, "lib", "stainless-dotty-standalone-0.10.1.jar")
 CONFIG_FILE = os.path.join(SCALA_DIR, "stainless.conf")
 CACHE_DIR = os.path.join(_REPO, "build", ".stainless-cache")
 REPORT_JSON = os.path.join(CACHE_DIR, "report.json")
@@ -80,6 +80,7 @@ def run(files: list[str] | None = None, extra_opts: list[str] | None = None) -> 
     cmd = [java, *JVM_ARGS, "-jar", JAR,
            f"--config-file={CONFIG_FILE}", f"--cache-dir={CACHE_DIR}", f"--json={REPORT_JSON}",
            *(extra_opts or []), *(files or FILES_TO_VERIFY)]
+    print(f"[verify] running: {' '.join(cmd)}", flush=True)
 
     # cwd inside the (gitignored) cache dir so Stainless'/Coursier's stray "null" cache lands there.
     # Stream output live (visible under pytest with -s) while also capturing it for parsing.

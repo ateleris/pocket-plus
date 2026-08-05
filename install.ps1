@@ -3,7 +3,7 @@
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-$Version = "0.10.0"
+$Version = "0.10.1"
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $dest = Join-Path $root "tools\stainless"
