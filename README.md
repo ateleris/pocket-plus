@@ -15,6 +15,10 @@ data/                    private test vectors (git-ignored; see data/README.md)
 
 ## Prerequisites
 
+- **Dev container** (alternative to everything below): open the repo in VS Code and *Reopen in
+  Container* — `.devcontainer/` provides JDK 25, the Scala toolchain (Coursier: `scala`, `scalac`,
+  `sbt`), clang, Python, and Claude Code, and downloads `tools/stainless` + creates the Python venv
+  on first start.
 - **Stainless toolchain**: run `./install.sh (linux|mac-arm64|mac-x86|win)` once — it downloads the
   Stainless compiler and the z3/cvc5 solvers from GitHub releases into `tools/stainless/`.
 - **JDK** with `java` on `PATH` (only used to run Stainless).

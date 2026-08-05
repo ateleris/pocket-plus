@@ -1,0 +1,44 @@
+{
+    "name": "POCKET+",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+    // Match the base image's user; VS Code remaps its uid/gid to yours
+    // on Linux so bind-mounted files stay owned by you.
+    "remoteUser": "vscode",
+    "features": {
+        // JDK for Stainless/GenC: the JVM args used by native/build.sh and
+        // python/pocketplus/verify.py (--sun-misc-unsafe-memory-access)
+        // need JDK 23+; Temurin 25 matches CI.
+        "ghcr.io/devcontainers/features/java:1": {
+            "version": "25",
+            "jdkDistro": "tem"
+        },
+        "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
+    },
+    // Share the host's Claude config (including login credentials) with the
+    // container. CLAUDE_CONFIG_DIR keeps everything Claude writes (state,
+    // history, credentials) inside that one mounted directory.
+    "mounts": [
+        "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind"
+    ],
+    "containerEnv": {
+        "CLAUDE_CONFIG_DIR": "/home/vscode/.claude"
+    },
+    // One-time setup from the README: download tools/stainless and create
+    // the Python venv with the test dependencies.
+    "postCreateCommand": "bash .devcontainer/post-create.sh",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "scalameta.metals",
+                "ms-python.python",
+                "llvm-vs-code-extensions.vscode-clangd",
+                "mutantdino.resourcemonitor"
+            ],
+            "settings": {
+                "python.defaultInterpreterPath": "${workspaceFolder}/python/env/bin/python"
+            }
+        }
+    }
+}
