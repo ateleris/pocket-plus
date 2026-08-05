@@ -1,4 +1,4 @@
-package datastructure.intarray
+package datastructure.arrays
 
 import stainless.lang.{ghost => ghostExpr, *}
 import stainless.annotation.*
@@ -57,7 +57,7 @@ case class IntArray(private val data: Array[Int], @ghost private var toList: Lis
   }.ensuring(_ => valid && old(this).toList.updated(i, v) == toList)
 }
 
-object Test {
+object TestIntArray {
   def test(): Unit = {
     val arr: IntArray with arr.valid = IntArray(Array(1, 2, 3), List(1, 2, 3))
     arr(0) = 10

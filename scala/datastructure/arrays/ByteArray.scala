@@ -1,4 +1,4 @@
-package datastructure.bytearray
+package datastructure.arrays
 
 import stainless.lang.{ghost => ghostExpr, *}
 import stainless.annotation.*
@@ -58,7 +58,7 @@ case class ByteArray(private val data: Array[Byte], @ghost private var toList: L
 }
 
 
-object Test {
+object TestByteArray {
   def test(): Unit = {
     val arr: ByteArray with arr.valid = ByteArray(Array(1, 2, 3), List(1, 2, 3))
     arr(0) = 10
