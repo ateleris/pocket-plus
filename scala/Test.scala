@@ -84,6 +84,97 @@ object Test {
     floorLog2(n) + 1
   }
 
+
+  def encodeCountEBits(n: BigInt): List[Boolean] = {
+    require(32 <= n && n <= MAX_F)
+    val countEN = countE(n)
+    val minBits = minNBitsToEncode(n)
+    val leadingZeros = countEN - minBits
+    List(ZERO) ++ List(ONE) ++ encodeMinNBits(n)
+  }
+
+  /**
+    * 2^k, defined by recursion since Stainless has no built-in exponentiation on BigInt.
+    *
+    * @param k
+    */
+  def pow2(k: BigInt): BigInt = {
+    require(k >= 0)
+    
+    if (k == 0) BigInt(1) else 2 * pow2(k - 1)
+  }.ensuring(res => res >= 1)
+
+  /**
+    * Encode the integer n as a big-endian (MSB first) bit string of exactly k bits. Generalizes [[encode5Bits]] to an arbitrary bit width k.
+    *
+    * `currentPow` caches 2^k so it is computed once by the caller and then only ever halved, instead of being recomputed from scratch at every recursive call.
+    *
+    * @param n
+    * @param k
+    * @param currentPow must be 2^k
+    */
+  def encodeNBits(n: BigInt, k: BigInt, currentPow: BigInt): List[Boolean] = {
+    require(k >= 1 && 0 <= n && currentPow == pow2(k) && n < currentPow)
+    
+    if (k == 1) {
+      List(n == 1)
+    } else {
+      val half = currentPow / 2
+      if (n < half) {
+        ZERO :: encodeNBits(n, k - 1, half)
+      } else {
+        ONE :: encodeNBits(n - half, k - 1, half)
+      }
+    }
+  }.ensuring(res => res.size == k)
+
+  /**
+    * Decode a big-endian (MSB first) bit string produced by [[encodeNBits]] back into an integer. Generalizes [[decode5Bits]] to an arbitrary bit width.
+    *
+    * @param l
+    */
+  def decodeNBits(l: List[Boolean]): BigInt = {
+    require(l.size >= 1)
+    decodeNBits(l, pow2(l.size - 1))
+  }.ensuring(res => 0 <= res && res < pow2(l.size))
+
+  /**
+    * `currentPow` caches 2^(l.size - 1) so it is computed once by the caller and then only ever halved, instead of being recomputed from scratch at every recursive call.
+    *
+    * @param l
+    * @param currentPow must be 2^(l.size - 1)
+    */
+  def decodeNBits(l: List[Boolean], currentPow: BigInt): BigInt = {
+    require(l.size >= 1 && currentPow == pow2(l.size - 1))
+    l match {
+      case b :: Nil => boolToBigInt(b)
+      case b :: tl => boolToBigInt(b) * currentPow + decodeNBits(tl, currentPow / 2)
+    }
+  }.ensuring(res => 0 <= res && res < 2 * currentPow)
+
+  /**
+    * n is, by definition of floorLog2, smaller than 2^(floorLog2(n) + 1) == 2^minNBitsToEncode(n), so encodeNBits(n, minNBitsToEncode(n)) is well-defined.
+    *
+    * @param n
+    */
+  def lemmaNLtPow2MinBits(n: BigInt): Unit = {
+    require(32 <= n && n <= MAX_F)
+  }.ensuring(_ => n < pow2(minNBitsToEncode(n)))
+
+  def encodeMinNBits(n: BigInt): List[Boolean] = {
+    require(32 <= n && n <= MAX_F)
+    val minBits = minNBitsToEncode(n)
+    encodeNBits(n, minBits, pow2(minBits))
+  }.ensuring(res => res.size == minNBitsToEncode(n))
+
+
+  def minNBitsToEncode(n: BigInt): BigInt = {
+    require(32 <= n && n <= MAX_F)
+    floorLog2(n) + 1
+  }
+
+  def boolToBigInt(b: Boolean): BigInt = if b then 1 else 0
+
   def generateIntervals(): Unit = {
     println(s"values , countE, minBits")
     (32 to MAX_F.toInt).map { n =>
@@ -98,6 +189,11 @@ object Test {
   def test(): Unit = {
     assert((0 to 31).map(n => fiveBitsToBigInt(encode5Bits(n)) == n).count(_ == false) == 0)
     assert((32 to MAX_F.toInt).map(n => floorLog2(n) == floor(log2(n))).count(_ == false) == 0)
+    
+    // Test encode decode inverse
+
+    assert((32 to MAX_F.toInt).map(n => decodeNBits(encodeMinNBits(n)) == n).count(_ == false) == 0)
+    println("EncodeMinNBits(129) = " + encodeMinNBits(129))
 }
   @main def main(args: String*): Unit = {
     Test.test()

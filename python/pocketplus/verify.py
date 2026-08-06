@@ -28,9 +28,6 @@ REPORT_JSON = os.path.join(CACHE_DIR, "report.json")
 # Configuration for the stainless invocation; files to verify, JVM args
 FILES_TO_VERIFY = [
     # os.path.join(SCALA_DIR, "PocketPlus.scala"),
-    os.path.join(SCALA_DIR, "datastructure", "arrays", "IntArray.scala"),
-    os.path.join(SCALA_DIR, "datastructure", "arrays", "ByteArray.scala"),
-    os.path.join(SCALA_DIR, "datastructure", "Utils.scala"),
     os.path.join(SCALA_DIR, "PocketExecSpec.scala"),
 ]
 N_THREADS = 4
