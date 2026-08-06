@@ -105,6 +105,22 @@ object Utils {
     require(l.size == 5)
     boolToBigInt(l.head) * 16 + boolToBigInt(l.tail.head) * 8 + boolToBigInt(l.tail.tail.head) * 4 + boolToBigInt(l.tail.tail.tail.head) * 2 + boolToBigInt(l.tail.tail.tail.tail.head)
   }
+
+
+  def encodeCountEBits(n: BigInt): List[Boolean] = {
+    require(32 <= n && n <= MAX_F)
+    val countE = countE(n)
+    val minBits = minNBitsToEncode(n)
+    val leadingZeros = countE - minBits
+    ghostExpr(lemmaCountEImpliesTheRightNumberOfLeadingZeros(n))
+    List.fill(leadingZeros.toInt)(ZERO) ++ List(ONE) ++ encodeMinNBits(n)
+  }
+
+  def encodeMinNBits(n: BigInt): List[Boolean] = {
+    require(32 <= n && n <= MAX_F)
+    val minBits = minNBitsToEncode(n)
+    
+  }
   
   /**
     * Returns the length of the bit string used to encode the integer n using the counter encoding defined in the blue book (Section 5.2.2, page 5-2).
@@ -142,6 +158,35 @@ object Utils {
       -1
     }
   }
+
+  def minNBitsToEncode(n: BigInt): BigInt = {
+    require(32 <= n && n <= MAX_F)
+    floorLog2(n) + 1
+  }
+
+  /**
+    * This lemma shows the relationship between the number of leading zeros implied by countE and the encoded number n
+    *
+    * @param n
+    */
+  @ghost @inlineOnce @opaque
+  def lemmaCountEImpliesTheRightNumberOfLeadingZeros(n: BigInt): Unit = {
+    require(32 <= n && n <= MAX_F)
+
+  }.ensuring(_ => {
+    if 32 <= n && n <= 63 then countE(n) == minNBitsToEncode(n)
+    else if 64 <= n && n <= 127 then countE(n) == minNBitsToEncode(n) + 1
+    else if 128 <= n && n <= 255 then countE(n) == minNBitsToEncode(n) + 2
+    else if 256 <= n && n <= 511 then countE(n) == minNBitsToEncode(n) + 3
+    else if 512 <= n && n <= 1023 then countE(n) == minNBitsToEncode(n) + 4
+    else if 1024 <= n && n <= 2047 then countE(n) == minNBitsToEncode(n) + 5
+    else if 2048 <= n && n <= 4095 then countE(n) == minNBitsToEncode(n) + 6
+    else if 4096 <= n && n <= 8191 then countE(n) == minNBitsToEncode(n) + 7
+    else if 8192 <= n && n <= 16383 then countE(n) == minNBitsToEncode(n) + 8
+    else if 16384 <= n && n <= 32767 then countE(n) == minNBitsToEncode(n) + 9
+    else if 32768 <= n && n <= 65535 then countE(n) == minNBitsToEncode(n) + 10
+    else true
+  })
 
 
 
