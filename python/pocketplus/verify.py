@@ -1,4 +1,4 @@
-"""Run Stainless formal verification on the scala sources and report the VC results.
+"""Run Stainless formal verification on the scala files whose paths are given in this script and report the VC results.
 
 Used by the `verify`-marked pytest test (python/tests/test_verify.py); also runnable directly
 (`python -m pocketplus.verify`). Standard library only. Verification is slow, so the test that
