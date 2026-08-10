@@ -95,15 +95,16 @@ def run(files: list[str] | None = None, extra_opts: list[str] | None = None) -> 
     if not os.path.isfile(REPORT_JSON):
         return {"total": 0, "valid": 0, "invalid": 0, "unknown": 0, "output": out, "unproven": ""}
 
-    report = json.load(open(REPORT_JSON))
-    records = next(entry[1][0] for entry in report["stainless"] if entry[0] == "verification")
+    with open(REPORT_JSON) as report_file:
+        report = json.load(report_file)
+        records = next(entry[1][0] for entry in report["stainless"] if entry[0] == "verification")
 
-    valid = sum(1 for r in records if next(iter(r["status"])) in _PASSING_STATUSES)
-    unproven_records = [r for r in records if next(iter(r["status"])) not in _PASSING_STATUSES]
-    invalid = sum(1 for r in unproven_records if next(iter(r["status"])) == "Invalid")
-    unknown = len(unproven_records) - invalid
+        valid = sum(1 for r in records if next(iter(r["status"])) in _PASSING_STATUSES)
+        unproven_records = [r for r in records if next(iter(r["status"])) not in _PASSING_STATUSES]
+        invalid = sum(1 for r in unproven_records if next(iter(r["status"])) == "Invalid")
+        unknown = len(unproven_records) - invalid
 
-    return {"total": len(records), "valid": valid, "invalid": invalid, "unknown": unknown,
+        return {"total": len(records), "valid": valid, "invalid": invalid, "unknown": unknown,
             "output": out, "unproven": "\n".join(_vc_summary(r) for r in unproven_records)}
 
 
