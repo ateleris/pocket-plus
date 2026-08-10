@@ -1,3 +1,3 @@
 stainless-dotty\
   ./PocketExecSpec.scala\
-  --config-file=stainless.conf -Dparallel=10 $1
+  --config-file=stainless.conf -Dparallel=2 $1
