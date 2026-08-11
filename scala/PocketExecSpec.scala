@@ -15,16 +15,41 @@ object PocketExecSpec {
     */
   def compressPocket(refPacket: List[Boolean], mask: List[Boolean], newPacket: List[Boolean]): List[Boolean] = {
     require(refPacket.size == mask.size && refPacket.size == newPacket.size)
-    require(1 <= newPacket.size && newPacket.size <= runLengthEncode.MAX_F)
+    require(1 <= newPacket.size && newPacket.size <= BasicEncodingFunctions.MAX_F)
     val compressed = newPacket
     compressed
   }.ensuring(res => res.size <= newPacket.size)
 }
 
-object runLengthEncode {
+
+
+/**
+  * Bluebook section 5.2
+  */
+object BasicEncodingFunctions {
   val MAX_F: BigInt = 65535 // 2^16 - 1
   val ONE = true
   val ZERO = false
+
+
+  /**
+    * Returns a bit string with bits of a at the indexes i where b_i is one.
+    * 
+    * Defined in Blue book section 5.2.4.
+    *
+    * @param a
+    * @param b
+    */
+  def bitExtractionFunction(a: List[Boolean], b: List[Boolean]): List[Boolean] = {
+    require(a.size == b.size)
+    b match {
+      case Nil() => Nil()
+      case Cons(bh, btl) if bh == ONE =>
+        Cons(a.head, bitExtractionFunction(a.tail, btl))
+      case Cons(bh, btl) =>
+        bitExtractionFunction(a.tail, btl)
+    }
+  }.ensuring(res => true)
 
   /**
     * Encode the list of bits using run-length encoding defined in the blue book (Section 5.2.3, page 5-2).
