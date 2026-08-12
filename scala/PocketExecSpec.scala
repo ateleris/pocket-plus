@@ -4,21 +4,137 @@ import stainless.lang.{ghost => ghostExpr, *}
 import stainless.annotation.*
 import stainless.collection.*
 import stainless.lang.StaticChecks.*
+import Utils.*
 
 object PocketExecSpec {
+
+  /**
+    * Compression parameters as defined in the blue book (Section 3.3.2, page 3-4).
+    * 
+    * Note from the bluebook:
+    *  The values of user-specified parameters Mo, Rt, ft, Pt, and it need not be known
+    *  in advance, or communicated via means external to the compressor, for successful decompression.
+    *
+    * @param t
+    * @param f
+    * @param m0 initial mask, a bit sequence of length f
+    * @param robustnessT Robustness level, between 0 and 7.
+    * @param pt new mask flag
+    * @param ft send flag 
+    * @param rt uncompressed flag 
+    * @param ct (defined in bluebook section 5.3.2.2) count of the occurences of of no mask changes, starting from the first cycle not covered by the minimum
+    *           required effictive robustness level and working backwards in time. ct is more state than parameters, but that does not matter since
+    *           the compression parameters contain the time step t, and therefore must be updated at every time step.
+    * @param itMinusOne input vector at time step t-1
+    * @param btMinusOne build vector at time step t-1
+    * @param mtMinusOne mask vector at time step t-1
+    */
+  case class CompressionParameters(t: BigInt, f: BigInt, m0: List[Boolean], robustnessT: BigInt, pt: Boolean, ft: Boolean, rt: Boolean, ct: BigInt, itMinusOne: List[Boolean], btMinusOne: List[Boolean], mtMinusOne: List[Boolean]) {
+    require(t >= 0)
+    require(1 <= f && f <= BasicEncodingFunctions.MAX_F)
+    require(m0.size == f)
+    require(0 <= robustnessT && robustnessT <= 7)
+    require(if t <= robustnessT then ft == true else true) // when t <= robustnessT, the mask must be sent, otherwise, the flag is user defined (bluebook section 3.3.2)
+    require(if t <= robustnessT then pt == true else true) // when t <= robustnessT, the uncompressed flag must be true, otherwise, the flag is user defined (bluebook section 3.3.2)
+    require(0 <= ct && ct <= min(t, 15) - robustnessT)
+    require(itMinusOne.size == f)
+    require(btMinusOne.size == f && (if t == 0 then btMinusOne == build0(f) else true))
+    require(mtMinusOne.size == f && (if t == 0 then mtMinusOne == m0 else true))
+  }
+
+  /**
+    * Initial Build (B_0) vector, as defined in bluebook section 4.1 page 4-1.
+    * 
+    * f is the length of the vector, which is the length of compressed vectors.
+    *
+    * @param f
+    */
+  def build0(f: BigInt): List[Boolean] = {
+    require(1 <= f && f <= BasicEncodingFunctions.MAX_F)
+    List.fill(f)(false)
+  }
+  /**
+    * Compute the new mask and the new build vector for the given time step t, based on the previous build and mask vectors, and the current input vector.
+    * The procedure is defined in the blue book (Section 4.2, page 4-1).
+    *
+    * @param t
+    * @param params
+    * @param itMinusOne
+    * @param it
+    * @param btMinusOne
+    * @param mtMinusOne
+    * @return
+    */
+  def updateMaskAndBuild(params: CompressionParameters, it: List[Boolean]): (List[Boolean], List[Boolean]) = {
+    require(params.f == it.size)
+    if (params.pt == false) {
+      val newBuild: List[Boolean] with newBuild.size == params.f = if params.t > 0 then or(xor(it, params.itMinusOne), params.btMinusOne) else build0(params.f)
+      val newMask: List[Boolean] with newMask.size == params.f = or(xor(it, params.itMinusOne), params.mtMinusOne)
+      (newBuild, newMask)
+    } else {
+      val newBuild: List[Boolean] with newBuild.size == params.f = build0(params.f)
+      val newMask: List[Boolean] with newMask.size == params.f = or(xor(it, params.itMinusOne), params.btMinusOne)
+      (newBuild, newMask)
+    }: (List[Boolean], List[Boolean])
+  }.ensuring(res => res._1.size == params.f && res._2.size == params.f)
+
+  /**
+    * Change vector update computation, defined in bluebook section 4.2.3.
+    * 
+    * This is the D_t vector.
+    *
+    * @param params
+    * @param mt
+    */
+  def updateChangeVector(params: CompressionParameters, mt: List[Boolean]): List[Boolean] = {
+    require(params.f == mt.size)
+    if params.t > 0 then xor(mt, params.mtMinusOne) else build0(params.f)
+  }.ensuring(res => res.size == params.f)
+
   /**
     * Blue book specifies the length of the input vectors as F for 1 <= F <= 2^16 - 1. (Section 3.2, page 3-1).
     *
-    * @param refPacket
+    * @param t time step
+    * @param inputPacket the packet to be compressed, named I_t in the blue book (Section 3.2, page 3-1)
+    * @param refPacket 
     * @param mask
-    * @param newPacket
     */
-  def compressPocket(refPacket: List[Boolean], mask: List[Boolean], newPacket: List[Boolean]): List[Boolean] = {
-    require(refPacket.size == mask.size && refPacket.size == newPacket.size)
-    require(1 <= newPacket.size && newPacket.size <= BasicEncodingFunctions.MAX_F)
-    val compressed = newPacket
+  def compressPocket(t: BigInt, inputPacket: List[Boolean], refPacket: List[Boolean], mask: List[Boolean]): List[Boolean] = {
+    require(refPacket.size == mask.size && refPacket.size == inputPacket.size)
+    require(1 <= inputPacket.size && inputPacket.size <= BasicEncodingFunctions.MAX_F)
+    val compressed = inputPacket
     compressed
-  }.ensuring(res => res.size <= newPacket.size)
+  }.ensuring(res => res.size <= inputPacket.size)
+}
+
+/**
+  * Bluebook section 5.3
+  */
+object EncodingStep {
+  /**
+    * Returns the output vector for the given time step.
+    * 
+    * @param t time step
+    */
+  def outputVector(params: PocketExecSpec.CompressionParameters, it: List[Boolean]): List[Boolean] = {
+    require(params.f == it.size)
+    val (bt, mt) = PocketExecSpec.updateMaskAndBuild(params, it)
+    val dvect = PocketExecSpec.updateChangeVector(params, mt)    
+    // ht computation
+    
+    Nil() // TODO
+  }
+  // --------------------------------------------------------------- INTERMEDIATE CALCULATIONS SECTION 5.3.2 ---------------------------------------------------------------
+
+  /**
+    * For t >= 0, d_t is defined in bluebook section 5.3.2.1, page 5-3 as
+    * if ft == false and rt == false, then d_t = 1, else d_t = 0.
+    *
+    * @param params
+    */
+  inline def dt(params: PocketExecSpec.CompressionParameters): Boolean = !params.ft && !params.rt
+
+  inline def Vt(params: PocketExecSpec.CompressionParameters): BigInt = if params.t - params.robustnessT <= 0 then params.robustnessT else params.robustnessT + params.ct
 }
 
 
@@ -543,6 +659,7 @@ object BasicEncodingFunctions {
   @ghost @inlineOnce @opaque
   def lemmaNLeadingZerosNotAffectedBySuffixWhenSmallerThanList(l: List[Boolean], suffix: List[Boolean]): Unit = {
     require(numberOfLeadingZeros(l) < l.size)
+    decreases(l)
     val nLeadingZeros = numberOfLeadingZeros(l)
     assert(nLeadingZeros < l.size)
     l match {
@@ -602,10 +719,9 @@ object BasicEncodingFunctions {
     else if 32768 <= n && n <= 65535 then countE(n) == minNBitsToEncode(n) + 10
     else true
   })
+}
 
-
-
-
+object Utils {
   def xor(a: Boolean, b: Boolean): Boolean = (a && !b) || (!a && b)
   def xor(aa: List[Boolean], bb: List[Boolean]): List[Boolean] = {
     require(aa.size == bb.size)
@@ -618,9 +734,20 @@ object BasicEncodingFunctions {
     }
   }.ensuring(res => res.size == aa.size && res.size == bb.size)
 
-  def boolToBigInt(b: Boolean): BigInt = if b then 1 else 0
-}
+  def or(aa: List[Boolean], bb: List[Boolean]): List[Boolean] = {
+    require(aa.size == bb.size)
+    aa match {
+      case Nil() => Nil()
+      case Cons(a, atl) => {
+        val (b, btl) = (bb.head, bb.tail)
+        (a || b) :: or(atl, btl)
+      }
+    }
+  }.ensuring(res => res.size == aa.size && res.size == bb.size)
 
+  def boolToBigInt(b: Boolean): BigInt = if b then 1 else 0
+  def min(a: BigInt, b: BigInt): BigInt = if a < b then a else b
+}
 object ListUtils {
   @ghost @inlineOnce @opaque
   def lemmaSplitAtIndexConcatSize[A](l1: List[A], l2: List[A], index: BigInt): Unit = {
