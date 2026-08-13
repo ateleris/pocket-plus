@@ -19,7 +19,7 @@ object PocketExecSpec {
     * @param f
     * @param m0 initial mask, a bit sequence of length f
     * @param robustnessT Robustness level, between 0 and 7.
-    * @param pt new mask flag
+    * @param pts mask flags, with its history of the previous "R_t + C_t"s as this is needed to compute a new value in the encoding step (eq 20 in bluebook section 5.3.3.1). Head is p_t.
     * @param ft send flag 
     * @param rt uncompressed flag 
     * @param ct (defined in bluebook section 5.3.2.2) count of the occurences of of no mask changes, starting from the first cycle not covered by the minimum
@@ -28,18 +28,26 @@ object PocketExecSpec {
     * @param itMinusOne input vector at time step t-1
     * @param btMinusOne build vector at time step t-1
     * @param mtMinusOne mask vector at time step t-1
+    * @param dts "Robustness level"s last D_t (used to compute X_t during encoding)
     */
-  case class CompressionParameters(t: BigInt, f: BigInt, m0: List[Boolean], robustnessT: BigInt, pt: Boolean, ft: Boolean, rt: Boolean, ct: BigInt, itMinusOne: List[Boolean], btMinusOne: List[Boolean], mtMinusOne: List[Boolean]) {
+  case class CompressionParameters(t: BigInt, f: BigInt, m0: List[Boolean], robustnessT: BigInt, pts: List[Boolean], ft: Boolean, rt: Boolean, ct: BigInt, itMinusOne: List[Boolean], btMinusOne: List[Boolean], mtMinusOne: List[Boolean], dts: List[List[Boolean]]) {
     require(t >= 0)
     require(1 <= f && f <= BasicEncodingFunctions.MAX_F)
     require(m0.size == f)
     require(0 <= robustnessT && robustnessT <= 7)
     require(if t <= robustnessT then ft == true else true) // when t <= robustnessT, the mask must be sent, otherwise, the flag is user defined (bluebook section 3.3.2)
-    require(if t <= robustnessT then pt == true else true) // when t <= robustnessT, the uncompressed flag must be true, otherwise, the flag is user defined (bluebook section 3.3.2)
+    require(if t <= robustnessT then pts.head == true else true) // when t <= robustnessT, the uncompressed flag must be true, otherwise, the flag is user defined (bluebook section 3.3.2)
+    require(if t <= robustnessT + ct then pts.size == t + 1 else pts.size == robustnessT + ct + 1) // pts is the history of the previous "R_t + C_t"s and the current pt, and therefore must be updated at every time step.
     require(0 <= ct && ct <= min(t, 15) - robustnessT)
     require(itMinusOne.size == f)
     require(btMinusOne.size == f && (if t == 0 then btMinusOne == build0(f) else true))
     require(mtMinusOne.size == f && (if t == 0 then mtMinusOne == m0 else true))
+    require(dts.forall(dv => dv.size == f) && (if t <= robustnessT then dts.size == t else dts.size == robustnessT))
+
+    def ptSetMoreThanOnceInHistory(historyLength: BigInt): Boolean = {
+      require(historyLength >= 1 && historyLength <= pts.size)
+      pts.take(historyLength).count(b => b == true) > 1
+    }
   }
 
   /**
@@ -67,7 +75,7 @@ object PocketExecSpec {
     */
   def updateMaskAndBuild(params: CompressionParameters, it: List[Boolean]): (List[Boolean], List[Boolean]) = {
     require(params.f == it.size)
-    if (params.pt == false) {
+    if (params.pts.head == false) {
       val newBuild: List[Boolean] with newBuild.size == params.f = if params.t > 0 then or(xor(it, params.itMinusOne), params.btMinusOne) else build0(params.f)
       val newMask: List[Boolean] with newMask.size == params.f = or(xor(it, params.itMinusOne), params.mtMinusOne)
       (newBuild, newMask)
@@ -121,8 +129,39 @@ object EncodingStep {
     val (bt, mt) = PocketExecSpec.updateMaskAndBuild(params, it)
     val dvect = PocketExecSpec.updateChangeVector(params, mt)    
     // ht computation
-    
-    Nil() // TODO
+    val xt: List[Boolean] with xt.size == params.f = or(params.f, (params.dts ++ List(dvect))) // The bluebook specifies X_t as a conditional on R_t, but since the dts list contains the right number of D_t vectors, we can just compute the OR of all of them with the current D_t vector.
+    val yt: List[Boolean] = BasicEncodingFunctions.bitExtractionFunction(not(mt), xt)
+    val vt: BigInt = compVt(params)
+    val et: List[Boolean] with et.isEmpty || et.size == 1 = if vt == 0 || xt.forall(b => b == false) then List[Boolean]() else if yt.forall(b => b == false) && vt > 0 && !xt.forall(b => b == false) then List(false) else List(true)
+    val kt: List[Boolean] with kt.isEmpty || kt == yt = if vt == 0 || xt.forall(b => b == false) || yt.forall(b => b == false) then List[Boolean]() else yt
+    val ct: List[Boolean] with ct.isEmpty || ct.size == 1 = if kt.isEmpty then List[Boolean]() else if kt.isEmpty && params.ptSetMoreThanOnceInHistory(vt) then List(false) else List(true)
+    val dt: Boolean = compDt(params)
+    val ht: List[Boolean] = BasicEncodingFunctions.runLengthEncode(xt) ++ BasicEncodingFunctions.encodeNBits(vt, 4, 16) ++ et ++ kt ++ ct ++ List(dt)
+
+    // qt computation
+    val qt: List[Boolean] = 
+      if dt then 
+        List[Boolean]() 
+      else if params.ft then
+        List(true) ++ BasicEncodingFunctions.runLengthEncode(xor(mt, leftShift(mt)).reverse)
+      else 
+        List(false) 
+
+    // ut computation
+    val ut: List[Boolean] = 
+      if dt && ct == List(true) then
+        BasicEncodingFunctions.bitExtractionFunction(it, or(xt.reverse, mt))
+      else if dt && ct != List(true) then
+        BasicEncodingFunctions.bitExtractionFunction(it, mt)
+      else if params.rt then
+        List(true) ++ BasicEncodingFunctions.countEncode(params.f) ++ it
+      else if !params.rt && params.ft && ct == List(true) then
+        List(false) ++ BasicEncodingFunctions.bitExtractionFunction(it, or(xt.reverse, mt))
+      else
+        List(false) ++ BasicEncodingFunctions.bitExtractionFunction(it, mt)
+
+    // final output vector
+    ht ++ qt ++ ut
   }
   // --------------------------------------------------------------- INTERMEDIATE CALCULATIONS SECTION 5.3.2 ---------------------------------------------------------------
 
@@ -132,9 +171,15 @@ object EncodingStep {
     *
     * @param params
     */
-  inline def dt(params: PocketExecSpec.CompressionParameters): Boolean = !params.ft && !params.rt
+  def compDt(params: PocketExecSpec.CompressionParameters): Boolean = !params.ft && !params.rt
 
-  inline def Vt(params: PocketExecSpec.CompressionParameters): BigInt = if params.t - params.robustnessT <= 0 then params.robustnessT else params.robustnessT + params.ct
+  /**
+    * Bluebook section 5.3.2.2
+    * 
+    *
+    * @param params
+    */
+  def compVt(params: PocketExecSpec.CompressionParameters): BigInt = if params.t - params.robustnessT <= 0 then params.robustnessT else params.robustnessT + params.ct
 }
 
 
@@ -744,6 +789,30 @@ object Utils {
       }
     }
   }.ensuring(res => res.size == aa.size && res.size == bb.size)
+
+  def or(bitwidth: BigInt, aas: List[List[Boolean]]): List[Boolean] = {
+    require(bitwidth >= 1 && aas.forall(l => l.size == bitwidth))
+    decreases(aas)
+    aas match {
+      case Nil() => Nil()
+      case Cons(hd, Nil()) => hd
+      case Cons(hd, tl) => or(hd, or(bitwidth, tl))
+    }
+  }.ensuring(res => if aas.isEmpty then res.isEmpty else res.size == bitwidth)
+
+  def not(aa: List[Boolean]): List[Boolean] = {
+    aa match {
+      case Nil() => Nil()
+      case Cons(a, atl) => (!a) :: not(atl)
+    }
+  }.ensuring(res => res.size == aa.size)
+
+  def leftShift(aa: List[Boolean]): List[Boolean] = {
+    aa match {
+      case Nil() => Nil()
+      case Cons(a, tl) => tl ++ List(false)
+    }
+  }.ensuring(res => res.size == aa.size)
 
   def boolToBigInt(b: Boolean): BigInt = if b then 1 else 0
   def min(a: BigInt, b: BigInt): BigInt = if a < b then a else b
