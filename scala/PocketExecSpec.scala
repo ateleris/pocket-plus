@@ -1,3 +1,4 @@
+//> using sourceJar "stainless-library_3-0.10.1-1-sources.jar"
 package pocket
 
 import stainless.lang.{ghost => ghostExpr, *}
@@ -19,16 +20,17 @@ object PocketExecSpec {
     * @param f
     * @param m0 initial mask, a bit sequence of length f
     * @param robustnessT Robustness level, between 0 and 7.
-    * @param pts mask flags, with its history of the previous "R_t + C_t"s as this is needed to compute a new value in the encoding step (eq 20 in bluebook section 5.3.3.1). Head is p_t.
+    * @param pts "new mask" flags, with its history of the previous "R_t + C_t"s as this is needed to compute a new value in the encoding step (eq 20 in bluebook section 5.3.3.1). Head is p_t.
+    *           The unpredictable bits in the mask cannot be classified as predictable unless this flag is set by the user to true (bluebook section 2.1)
     * @param ft send flag 
     * @param rt uncompressed flag 
     * @param ct (defined in bluebook section 5.3.2.2) count of the occurences of of no mask changes, starting from the first cycle not covered by the minimum
-    *           required effictive robustness level and working backwards in time. ct is more state than parameters, but that does not matter since
+    *           required effective robustness level and working backwards in time. ct is more state than parameters, but that does not matter since
     *           the compression parameters contain the time step t, and therefore must be updated at every time step.
     * @param itMinusOne input vector at time step t-1
     * @param btMinusOne build vector at time step t-1
     * @param mtMinusOne mask vector at time step t-1
-    * @param dts "Robustness level"s last D_t (used to compute X_t during encoding)
+    * @param dts "Robustness level"s last D_t (used to compute X_t during encoding). The head is them most recent element, and at most D_{t-1}. This is NOT a parameter but some state.
     */
   case class CompressionParameters(t: BigInt, f: BigInt, m0: List[Boolean], robustnessT: BigInt, pts: List[Boolean], ft: Boolean, rt: Boolean, ct: BigInt, itMinusOne: List[Boolean], btMinusOne: List[Boolean], mtMinusOne: List[Boolean], dts: List[List[Boolean]]) {
     require(t >= 0)
@@ -129,8 +131,9 @@ object EncodingStep {
     val (bt, mt) = PocketExecSpec.updateMaskAndBuild(params, it)
     val dvect = PocketExecSpec.updateChangeVector(params, mt)    
     // ht computation
-    val xt: List[Boolean] with xt.size == params.f = or(params.f, (params.dts ++ List(dvect))) // The bluebook specifies X_t as a conditional on R_t, but since the dts list contains the right number of D_t vectors, we can just compute the OR of all of them with the current D_t vector.
-    val yt: List[Boolean] = BasicEncodingFunctions.bitExtractionFunction(not(mt), xt)
+    // X_T represents all the bit positions that became "unpredictable" during the last R_t + 1 cycles, i.e., if R_t = 0 then X_t = D_t so the changes between t-1 and t, and otherwise, betwee t-R_t and t.
+    val xt: List[Boolean] with xt.size == params.f = or(params.f, (params.dts ++ List(dvect))).reverse // The bluebook specifies X_t as a conditional on R_t, but since the dts list contains the right number of D_t vectors, we can just compute the OR of all of them with the current D_t vector.
+    val yt: List[Boolean] = BasicEncodingFunctions.bitExtractionFunction(not(mt).reverse, xt)
     val vt: BigInt = compVt(params)
     val et: List[Boolean] with et.isEmpty || et.size == 1 = if vt == 0 || xt.forall(b => b == false) then List[Boolean]() else if yt.forall(b => b == false) && vt > 0 && !xt.forall(b => b == false) then List(false) else List(true)
     val kt: List[Boolean] with kt.isEmpty || kt == yt = if vt == 0 || xt.forall(b => b == false) || yt.forall(b => b == false) then List[Boolean]() else yt
