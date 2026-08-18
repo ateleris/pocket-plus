@@ -19,6 +19,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(os.path.dirname(_HERE))  # pocketplus -> python -> repo root
 
 SCALA_DIR = os.path.join(_REPO, "scala")
+SCALA_SOURCE_FILES_DIR = os.path.join(SCALA_DIR, "src", "main", "scala", "pocket")
 STAINLESS_DIR = os.path.join(_REPO, "tools", "stainless")
 JAR = os.path.join(STAINLESS_DIR, "lib", "stainless-dotty-standalone-0.10.1.jar")
 CONFIG_FILE = os.path.join(SCALA_DIR, "stainless.conf")
@@ -28,7 +29,7 @@ REPORT_JSON = os.path.join(CACHE_DIR, "report.json")
 # Configuration for the stainless invocation; files to verify, JVM args
 FILES_TO_VERIFY = [
     # os.path.join(SCALA_DIR, "PocketPlus.scala"),
-    os.path.join(SCALA_DIR, "PocketExecSpec.scala"),
+    os.path.join(SCALA_SOURCE_FILES_DIR, "PocketExecSpec.scala"),
 ]
 N_THREADS = 4
 

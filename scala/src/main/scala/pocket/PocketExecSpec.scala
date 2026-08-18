@@ -1,4 +1,3 @@
-//> using sourceJar "stainless-library_3-0.10.1-1-sources.jar"
 package pocket
 
 import stainless.lang.{ghost => ghostExpr, *}
@@ -132,7 +131,7 @@ object EncodingStep {
     val dvect = PocketExecSpec.updateChangeVector(params, mt)    
     // ht computation
     // X_T represents all the bit positions that became "unpredictable" during the last R_t + 1 cycles, i.e., if R_t = 0 then X_t = D_t so the changes between t-1 and t, and otherwise, betwee t-R_t and t.
-    val xt: List[Boolean] with xt.size == params.f = or(params.f, (params.dts ++ List(dvect))).reverse // The bluebook specifies X_t as a conditional on R_t, but since the dts list contains the right number of D_t vectors, we can just compute the OR of all of them with the current D_t vector.
+    val xt: List[Boolean] with xt.size == params.f = or(params.f, (params.dts ++ List(dvect))).reverse.asInstanceOf[{r: List[Boolean] with r.size == params.f }] // The bluebook specifies X_t as a conditional on R_t, but since the dts list contains the right number of D_t vectors, we can just compute the OR of all of them with the current D_t vector.
     val yt: List[Boolean] = BasicEncodingFunctions.bitExtractionFunction(not(mt).reverse, xt)
     val vt: BigInt = compVt(params)
     val et: List[Boolean] with et.isEmpty || et.size == 1 = if vt == 0 || xt.forall(b => b == false) then List[Boolean]() else if yt.forall(b => b == false) && vt > 0 && !xt.forall(b => b == false) then List(false) else List(true)
@@ -197,23 +196,33 @@ object BasicEncodingFunctions {
 
 
   /**
-    * Returns a bit string with bits of a at the indexes i where b_i is one.
-    * 
-    * Defined in Blue book section 5.2.4.
+    * BE(a, b): the bit extraction of a relative to b, defined in Blue book section 5.2.4, eq. (11):
+    *   BE(a,b) = a_{g_(H(b)-1)} || ... || a_{g_0}
+    * where g_i is the position of the i-th '1' bit of b counting from the MSB, and H(b) is the
+    * number of '1' bits in b. The bit at the *last* matching position (closest to the LSB) comes
+    * first in the result, and the bit at the *first* matching position (closest to the MSB) comes
+    * last — the reverse of a plain left-to-right (MSB-first) scan.
     *
     * @param a
     * @param b
     */
   def bitExtractionFunction(a: List[Boolean], b: List[Boolean]): List[Boolean] = {
     require(a.size == b.size)
+    bitExtractionMsbFirst(a, b).reverse
+  }.ensuring(res => true)
+
+  /** Bits of a at the indexes where b is one, scanning from the MSB, in scan order
+    * (a_{g_0}, ..., a_{g_(H(b)-1)}) — the reverse of [[bitExtractionFunction]] / BE(a,b). */
+  private def bitExtractionMsbFirst(a: List[Boolean], b: List[Boolean]): List[Boolean] = {
+    require(a.size == b.size)
     b match {
       case Nil() => Nil()
       case Cons(bh, btl) if bh == ONE =>
-        Cons(a.head, bitExtractionFunction(a.tail, btl))
+        Cons(a.head, bitExtractionMsbFirst(a.tail, btl))
       case Cons(bh, btl) =>
-        bitExtractionFunction(a.tail, btl)
+        bitExtractionMsbFirst(a.tail, btl)
     }
-  }.ensuring(res => true)
+  }
 
   /**
     * Encode the list of bits using run-length encoding defined in the blue book (Section 5.2.3, page 5-2).
