@@ -10,7 +10,7 @@ repo="$(dirname "$here")"
 jar="$(echo "$repo"/tools/stainless/lib/stainless-dotty-standalone-*.jar)"
 [ -f "$jar" ] || { echo "Stainless jar not found; run ./install.sh first." >&2; exit 1; }
 
-scala_src="$repo/scala/PocketPlus.scala"
+scala_src="$repo/scala/src/main/scala/pocket/PocketPlus.scala"
 genc_c="$here/generated/pocketplus.c"
 jvm_args="-Xss512m --sun-misc-unsafe-memory-access=allow"
 
