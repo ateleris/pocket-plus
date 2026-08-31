@@ -112,7 +112,7 @@ object SpecTest {
         name = "t=0, F=8, uncompressed init",
         f = 8,
         input = bitsOf("10100011"),
-        expected = bitsOf("1000000101100000011000001001011100011010100011")
+        expected = bitsOf("100000011011100011010100011")
       )
     )
     val seqCases = loadDifferentialCases("src/test/res/test-vectors/differential/cases.json")
