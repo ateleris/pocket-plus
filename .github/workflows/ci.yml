@@ -67,6 +67,6 @@ jobs:
       # fail: the gate is red by design until verification invariants are added.
       - name: Run Stainless verification gate
         if: runner.os == 'Linux'
-        continue-on-error: true
+        # continue-on-error: true
         working-directory: python
-        run: pytest -m verify
+        run: pytest -s -m verify
