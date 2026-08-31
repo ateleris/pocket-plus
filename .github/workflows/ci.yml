@@ -29,7 +29,7 @@ jobs:
         if: runner.os == 'Linux'
         with:
           path: build/.stainless-cache
-          key: stainless-vc-cache-${{ matrix.os }}-${{ hashFiles('scala/PocketPlus.scala') }}
+          key: stainless-vc-cache-${{ matrix.os }}-${{ hashFiles('scala/src/main/scala/pocket/PocketPlus.scala') }}
           restore-keys: stainless-vc-cache-${{ matrix.os }}-
 
       # The JVM args used for GenC/verification (--sun-misc-unsafe-memory-access) need JDK 23+.
@@ -63,10 +63,8 @@ jobs:
         working-directory: python
         run: pytest -m "not verify"
 
-      # Linux-only (verification is slow, and one OS gives enough signal). Allowed to
-      # fail: the gate is red by design until verification invariants are added.
+      # Linux-only (verification is slow, and one OS gives enough signal).
       - name: Run Stainless verification gate
         if: runner.os == 'Linux'
-        continue-on-error: true
         working-directory: python
-        run: pytest -m verify
+        run: pytest -s -m verify

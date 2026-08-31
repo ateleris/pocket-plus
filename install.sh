@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.10.0"
+VERSION="0.10.2"
 
 case "${1:-}" in
   linux)     platform="linux" ;;
@@ -16,7 +16,8 @@ dest="$root/tools/stainless"
 url="https://github.com/epfl-lara/stainless/releases/download/v$VERSION/stainless-dotty-standalone-$VERSION-$platform.zip"
 
 zip="$(mktemp)"
-trap 'rm -f "$zip"' EXIT
+sbt_zip="$(mktemp)"
+trap 'rm -f "$zip" "$sbt_zip"' EXIT
 
 echo "Downloading $url"
 curl -fL -o "$zip" "$url"
@@ -25,3 +26,15 @@ rm -rf "$dest"
 mkdir -p "$dest"
 unzip -q "$zip" -d "$dest"
 echo "Installed Stainless $VERSION to $dest"
+
+# --- sbt-stainless plugin, for the scala/ sbt project ---
+# https://epfl-lara.github.io/stainless/installation.html#sbt-project
+sbt_project="$root/scala"
+sbt_url="https://github.com/epfl-lara/stainless/releases/download/v$VERSION/sbt-stainless.zip"
+
+echo "Downloading $sbt_url"
+curl -fL -o "$sbt_zip" "$sbt_url"
+
+rm -rf "$sbt_project/project/lib" "$sbt_project/stainless"
+unzip -q "$sbt_zip" -d "$sbt_project"
+echo "Installed sbt-stainless plugin $VERSION to $sbt_project"
