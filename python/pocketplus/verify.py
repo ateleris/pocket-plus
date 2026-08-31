@@ -20,7 +20,7 @@ _REPO = os.path.dirname(os.path.dirname(_HERE))  # pocketplus -> python -> repo 
 
 SCALA_DIR = os.path.join(_REPO, "scala")
 STAINLESS_DIR = os.path.join(_REPO, "tools", "stainless")
-JAR = os.path.join(STAINLESS_DIR, "lib", "stainless-dotty-standalone-0.10.1.jar")
+JAR = os.path.join(STAINLESS_DIR, "lib", "stainless-dotty-standalone-0.10.2.jar")
 CONFIG_FILE = os.path.join(SCALA_DIR, "stainless.conf")
 CACHE_DIR = os.path.join(_REPO, "build", ".stainless-cache")
 REPORT_JSON = os.path.join(CACHE_DIR, "report.json")
