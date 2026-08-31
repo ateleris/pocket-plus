@@ -5,7 +5,7 @@
   <PropertyGroup>
     <RepoRoot>$(MSBuildThisFileDirectory)..\</RepoRoot>
     <StainlessDir>$(RepoRoot)tools\stainless\</StainlessDir>
-    <StainlessJar>$(StainlessDir)lib\stainless-dotty-standalone-0.10.1.jar</StainlessJar>
+    <StainlessJar>$(StainlessDir)lib\stainless-dotty-standalone-0.10.2.jar</StainlessJar>
     <ScalaSource>$(RepoRoot)scala\PocketPlus.scala</ScalaSource>
     <GenCDir>$(RepoRoot)native\generated\</GenCDir>
     <GenCSource>$(GenCDir)pocketplus.c</GenCSource>
