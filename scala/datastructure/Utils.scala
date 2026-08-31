@@ -127,7 +127,9 @@ object Utils {
 
   @opaque @inlineOnce @ghost
   def additionIntPreservedByToBigInt(a: Int, b: Int): Unit = {
-    require(BigInt(a) + BigInt(b) <= BigInt(Int.MaxValue) && BigInt(a) + BigInt(b) >= BigInt(Int.MinValue))
+    require(BigInt(Int.MinValue) <= BigInt(a) + BigInt(b) && BigInt(a) + BigInt(b) <= BigInt(Int.MaxValue))
+    assert(Int.MinValue <= a + b && a + b <= Int.MaxValue)
+    assert(BigInt(a + b) == BigInt(a) + BigInt(b))
   }.ensuring(_ => BigInt(a + b) == BigInt(a) + BigInt(b))
 
   @opaque @inlineOnce @ghost
@@ -136,6 +138,7 @@ object Utils {
     require(Int.MinValue <= c && c <= Int.MaxValue)
     require(Int.MinValue <= a && a <= Int.MaxValue)
     require(Int.MinValue <= b && b <= Int.MaxValue)
+    assert(a.toInt + b.toInt == c.toInt)
   }.ensuring(_ => a.toInt + b.toInt == c.toInt)
 
   @opaque @inlineOnce @ghost
