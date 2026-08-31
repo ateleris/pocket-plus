@@ -140,7 +140,9 @@ object Utils {
 
   @opaque @inlineOnce @ghost
   def subtractionIntPreservedByToBigInt(a: Int, b: Int): Unit = {
-    require(BigInt(a) - BigInt(b) <= BigInt(Int.MaxValue) && BigInt(a) - BigInt(b) >= BigInt(Int.MinValue))
+    require(BigInt(Int.MinValue) <= BigInt(a) - BigInt(b) && BigInt(a) - BigInt(b) <= BigInt(Int.MaxValue))
+    assert(Int.MinValue <= a - b && a - b <= Int.MaxValue)
+    assert(BigInt(a - b) == BigInt(a) - BigInt(b))
   }.ensuring(_ => BigInt(a - b) == BigInt(a) - BigInt(b))
 
   @opaque @inlineOnce @ghost
