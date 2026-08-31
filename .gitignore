@@ -45,6 +45,7 @@ python/env/
 
 **/.scala-build
 **/.metals
+**/.bloop
 **/.bsp
 **/.stainless-cache
 **/.vscode
