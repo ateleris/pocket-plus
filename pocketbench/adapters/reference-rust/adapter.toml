@@ -1,0 +1,8 @@
+name        = "reference-rust"
+language    = "Rust"
+source      = "${ccsds124_root}/implementations/rust"
+# Renders Cargo.toml.in -> Cargo.toml with the resolved codec path, then builds. cargo
+# path dependencies cannot reference ${ccsds124_root}, so the manifest is generated.
+build       = "sh -c 'sed \"s|@CCSDS124@|{source}|\" Cargo.toml.in > Cargo.toml && exec cargo build --release'"
+entrypoint  = "target/release/adapter"
+version_cmd = "cargo --version"

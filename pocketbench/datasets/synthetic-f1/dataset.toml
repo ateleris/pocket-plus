@@ -1,0 +1,9 @@
+# A single hand-generated vector whose packet field width is F = 1 bit, the standard's minimum, to
+# exercise the bit-granular path. Not a ccsds124 reference vector: its expected .pkt was produced
+# with the reference-c codec.
+#
+# `kind` names the LOADER, so "reference" here means "params read from the vector's
+# *-metadata.json", not that this belongs to the reference set. With `vector` set it is one dataset
+# named after the folder rather than a collection. No `source`: the data is in this folder.
+kind   = "reference"
+vector = "f1"
