@@ -1,0 +1,20 @@
+# TEMPLATE: edit this file, never Cargo.toml, which `pocket-bench build` overwrites by
+# substituting the resolved codec path for the @CCSDS124@ token below (a cargo path dependency
+# cannot read a ${var}). The token must appear exactly once.
+[package]
+name = "reference-rust-adapter"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "adapter"
+path = "src/main.rs"
+
+[dependencies]
+ccsds124 = { path = "@CCSDS124@" }
+pocketbench-adapter = { path = "../common/rust/pocketbench-adapter" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

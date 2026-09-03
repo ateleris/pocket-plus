@@ -1,0 +1,28 @@
+# Template for config/config.toml, which is machine-local and not committed. Copy it:
+#
+#     cp config/config.example.toml config/config.toml
+#
+# then edit the two paths below to match this machine. Relative paths resolve against this
+# file's directory.
+#
+# Implementations and datasets are NOT configured here: each is a discovered folder under
+# adapters/<name>/ or datasets/<name>/ with its own manifest, and everything descriptive is
+# self-reported by the built wrapper. See docs/IMPLEMENTATION-INTERFACE.md.
+
+[settings]
+# The external ccsds124 checkout supplying the reference codecs and test vectors, reached as
+# ${ccsds124_root} from the adapter and dataset manifests. Deliberately outside this repo so no
+# second git repository is nested in it, hence machine-local. `implementations/` is gitignored, so
+# cloning or symlinking the checkout there keeps the default below working:
+#
+#     git clone https://github.com/tanagraspace/ccsds124 implementations/ccsds124
+#
+# Without it the reference-* adapters and the reference datasets are skipped, and pocketrust plus
+# the synthetic datasets still run.
+ccsds124_root = "../implementations/ccsds124"
+results_dir = "../results"
+# Extracted UAB/CNES conformance suite (encoder_input/, decoder_input/, file_list.csv). Licensed
+# and machine-local, so it lives outside this repo and there is no default worth guessing. Leave
+# this commented out unless you run the `conformance` command: with it set to a path that does not
+# exist, the suite still loads and `conformance` fails on the missing files instead of skipping.
+# conformance_data_dir = "/path/to/ccsds124_full_crossvalidation"

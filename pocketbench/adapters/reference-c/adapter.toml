@@ -1,0 +1,6 @@
+name        = "reference-c"
+language    = "C"
+source      = "${ccsds124_root}/implementations/c"
+build       = "make MAX_PACKET_BITS={max_packet_bits} SOURCE={source}"
+entrypoint  = "build/adapter"
+version_cmd = "gcc --version"

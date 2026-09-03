@@ -1,0 +1,17 @@
+[package]
+name = "pocketrust-adapter"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "adapter"
+path = "src/main.rs"
+
+[dependencies]
+pocketrust = { path = "../../../pocketrust" }
+pocketbench-adapter = { path = "../common/rust/pocketbench-adapter" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

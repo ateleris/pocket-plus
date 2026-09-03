@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# jupyter autosaves
+.ipynb_checkpoints/
+
+# uv
+# (uv.lock IS tracked)
+
+# Benchmark artifacts
+results/
+*.pkt
+*.depkt
+# ...but a committed dataset's expected output IS the dataset: a `reference` dataset without its
+# .pkt files has nothing to compare against.
+!datasets/*/expected-output/*.pkt
+
+# Every codec lives outside this repo, so none is ever nested here. CI does check ccsds124 out
+# into implementations/ for the integration job, so the path stays ignored: a codec tree must
+# never be committed.
+implementations/
+
+# adapter build artifacts
+adapters/*/build/
+adapters/*/target/
+adapters/common/rust/*/target/
+# the shared crate is only ever built as a path dependency, so its lock file is never read
+adapters/common/rust/*/Cargo.lock
+# rendered from Cargo.toml.in at build time
+adapters/reference-rust/Cargo.toml
+
+# data placed inside a datasets/ folder is not committed; keep only dataset.toml
+datasets/*/data/
+
+# never commit the licensed UAB/CNES yellow book vectors
+conformance-data/
+crossval-data/
+*.raw+config
+*.124+config
+*.status+raw
+
+# machine-local: names where this machine keeps the ccsds124 checkout and the licensed
+# conformance suite. config.example.toml is the committed template.
+config/config.toml
+
+# Claude
+CLAUDE.md
+BACKLOG.md
+docs/superpowers/
+# personal, and its paths are machine-specific
+.claude/settings.local.json
