@@ -1,0 +1,4 @@
+# The UAB/CNES conformance suite (yellow book), used only by the `conformance` command.
+kind     = "conformance"
+source   = "${conformance_data_dir}"
+manifest = "${ccsds124_root}/crossvalidation/file_list.csv"

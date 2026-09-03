@@ -1,0 +1,7 @@
+name        = "mock"
+language    = "Python"
+interpreter = "python"
+entrypoint  = "adapter.py"
+# Keeps this test double out of bench/validate/profile/conformance and the "all impls" default,
+# while discover_adapters still returns it for the unit tests.
+example     = true

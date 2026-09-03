@@ -1,0 +1,6 @@
+name        = "reference-cpp"
+language    = "C++"
+source      = "${ccsds124_root}/implementations/cpp"
+build       = "make SOURCE={source}"
+entrypoint  = "build/adapter"
+version_cmd = "g++ --version"

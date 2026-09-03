@@ -1,0 +1,12 @@
+# pocketbench configuration for the `integration` job of .github/workflows/pocketbench.yml.
+# Relative paths resolve against this file's directory.
+
+[settings]
+# Where the workflow checks ccsds124 out. One checkout backs both the reference adapters
+# (${ccsds124_root}/implementations/<lang>) and the reference datasets (${ccsds124_root}/test-vectors),
+# so this is the only line that differs from config.toml.
+ccsds124_root = "../implementations/ccsds124"
+results_dir = "../results"
+# conformance_data_dir is deliberately absent: the licensed UAB/CNES yellow book must never be
+# uploaded to a GitHub-hosted runner, so CI never runs `conformance` and the conformance dataset
+# is skipped at load when its source cannot resolve.

@@ -1,0 +1,6 @@
+name        = "pocketrust"
+language    = "Rust (pocketrust)"
+source      = "../pocketrust"
+build       = "cargo build --release"
+entrypoint  = "target/release/adapter"
+version_cmd = "cargo --version"

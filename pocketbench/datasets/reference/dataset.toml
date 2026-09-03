@@ -1,0 +1,7 @@
+# The ccsds124 test-vectors.
+#
+# No `vector` key, so this is a collection: one dataset per vector under `source` that has an
+# `expected-output/<stem>-metadata.json`, named `reference-<stem>`. The compression parameters come
+# from that metadata (the recipe that generated the reference .pkt), so they cannot drift.
+kind   = "reference"
+source = "${ccsds124_root}/test-vectors"

@@ -1,0 +1,112 @@
+name: pocketbench
+
+# CI for the pocketbench harness (pocketbench/). The pocketplus codec has its own workflow,
+# ci.yml; both live here at the repo root, the only place GitHub reads workflows from.
+#
+# CI NEVER runs `conformance` (the licensed UAB/CNES yellow book must not be uploaded to
+# GitHub-hosted runners) nor `bench` / `profile` (perf numbers are not meaningful on shared
+# runners).
+#
+# Nothing here needs a secret, so both jobs also run on pull requests from forks.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: pocketbench-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# ccsds124 is reached with an explicit actions/checkout rather than a submodule, so no second git
+# repo is ever nested in this one. pocketrust lives in THIS repo and needs no checkout.
+# Pin CCSDS124_REF to a tag or SHA to freeze the reference.
+env:
+  CCSDS124_REPO: tanagraspace/ccsds124
+  CCSDS124_REF: main
+
+jobs:
+  unit:
+    name: unit (framework tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pocketbench
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (edition 2024 crates need >= 1.85)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: pocketbench/uv.lock
+
+      - name: Sync dependencies
+        run: uv sync
+
+      # No ccsds124 checkout in this job, so everything that needs it skips rather than fails: the
+      # reference-* adapters resolve their `source` under ${ccsds124_root}, and the reference
+      # datasets come from the same place. The mock contract tests and pocketrust still run.
+      - name: Run framework tests
+        run: uv run python -m pytest
+
+  integration:
+    name: integration (build + validate, all real impls)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pocketbench
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # `path` is relative to the workspace root, not to defaults.working-directory. One checkout
+      # backs both the reference adapters (${ccsds124_root}/implementations/<lang>) and the
+      # reference datasets (${ccsds124_root}/test-vectors); config/ci.toml points the variable here.
+      - name: Checkout ccsds124 (reference-c / reference-cpp / reference-rust)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.CCSDS124_REPO }}
+          ref: ${{ env.CCSDS124_REF }}
+          path: pocketbench/implementations/ccsds124
+
+      - name: Install C/C++ toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      - name: Install Rust (edition 2024 crates need >= 1.85)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: pocketbench/uv.lock
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Build all adapters
+        run: uv run pocket-bench build -c config/ci.toml
+
+      # Split by capability so the gate is one every impl can meet: reference-cpp (compile-time
+      # SUPPORTED_SIZES) and reference-rust (byte-aligned public API) reject the sub-byte-F
+      # datasets, which the unit job asserts per-impl instead.
+      #
+      # These build rather than reusing the step above, which sizes reference-c's compile-time
+      # CCSDS124_MAX_PACKET_LENGTH for bench where validate needs the codec default.
+      - name: Validate reference-c + pocketrust (every dataset)
+        run: uv run pocket-bench validate -c config/ci.toml
+             --impl reference-c --impl pocketrust
+
+      - name: Validate reference-cpp + reference-rust (byte-aligned vectors)
+        run: uv run pocket-bench validate -c config/ci.toml
+             --impl reference-cpp --impl reference-rust
+             --dataset reference-simple --dataset reference-hiro --dataset reference-edge-cases
+             --dataset reference-housekeeping --dataset reference-venus-express
