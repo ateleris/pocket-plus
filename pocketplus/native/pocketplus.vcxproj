@@ -37,15 +37,33 @@
     <TargetName>pocketplus</TargetName>
   </PropertyGroup>
 
+  <!-- C99 + lint flags, the Windows counterpart of the `std`/`warn` variables in native/build.sh;
+       keep the two in sync. C99 rather than C11 because the GenC output uses variable-length
+       arrays, which C11 makes optional (that is also why this project needs the ClangCL toolset:
+       MSVC's cl rejects VLAs outright). Under C99 they are standard, so the -Wno-vla-extension
+       waiver this project used to carry is no longer needed. clang-cl only understands MSVC option
+       syntax, so every GCC-style flag is escaped with /clang:.
+       -Wundef is deliberately absent: the generated header tests `#elif __GNUC__>=3`. -->
+  <PropertyGroup>
+    <PPClangOptions>/clang:-std=c99 /clang:-pedantic /clang:-Wall /clang:-Wextra /clang:-Wshadow /clang:-Wstrict-prototypes /clang:-Wmissing-prototypes /clang:-Wpointer-arith /clang:-Wconversion /clang:-Werror</PPClangOptions>
+    <!-- Waived for native/generated/ only (machine-written, never hand-edited): GenC emits an unused
+         `State` local in main, and drops the parentheses the Scala already has around `a || (b && c)`.
+         These must be appended *after* PPClangOptions — a later -Wall re-enables what an earlier
+         -Wno- switched off. -->
+    <PPClangWaiversGenerated>/clang:-Wno-unused-variable /clang:-Wno-parentheses</PPClangWaiversGenerated>
+  </PropertyGroup>
+
   <ItemDefinitionGroup>
     <ClCompile>
       <CompileAs>CompileAsC</CompileAs>
-      <LanguageStandard_C>stdc11</LanguageStandard_C>
+      <!-- Language standard and warnings come from PPClangOptions below, not from the MSVC-syntax
+           properties: cl.exe's LanguageStandard_C has no C99 value, and in clang-cl mode a bare
+           -Wall means /Wall (≈ -Weverything). Leave these at Default so nothing fights /clang:. -->
+      <LanguageStandard_C>Default</LanguageStandard_C>
       <WarningLevel>Level3</WarningLevel>
       <AdditionalIncludeDirectories>$(MSBuildProjectDirectory)\generated;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>PP_BUILD_DLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <!-- Clang accepts C99 VLAs as an extension; silence the warning so /WX stays clean. -->
-      <AdditionalOptions>-Wno-vla-extension %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>$(PPClangOptions) %(AdditionalOptions)</AdditionalOptions>
       <Optimization Condition="'$(Configuration)' == 'Debug'">Disabled</Optimization>
       <Optimization Condition="'$(Configuration)' == 'Release'">MaxSpeed</Optimization>
     </ClCompile>
@@ -56,7 +74,9 @@
   </ItemDefinitionGroup>
 
   <ItemGroup>
-    <ClCompile Include="generated\pocketplus.c" />
+    <ClCompile Include="generated\pocketplus.c">
+      <AdditionalOptions>%(AdditionalOptions) $(PPClangWaiversGenerated)</AdditionalOptions>
+    </ClCompile>
     <ClCompile Include="src\pp_shim.c" />
     <ClInclude Include="generated\pocketplus.h" />
     <ClInclude Include="src\pp_shim.h" />
