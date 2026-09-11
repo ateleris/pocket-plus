@@ -85,6 +85,22 @@ env/bin/python -m pytest -m verify         # Stainless verification gate (slow)
 - The codec API the DLL exports (`pp_compressor_create`, `pp_compress`, `pp_decompressor_create`,
   `pp_decompress`, …) is hand-written in `native/src/pp_shim.c`; it owns the buffers so Python only
   passes flat `(bool*, length)` arrays. The GenC output in `native/generated/` is never hand-edited.
+- The C is built as **C99** (`-std=c99 -pedantic` / `/clang:-std=c99`) with warnings as errors:
+  `-Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wpointer-arith -Wconversion
+  -Werror`. The flag set is defined twice — `std`/`warn` in `native/build.sh` and `PPClangOptions`
+  in `native/pocketplus.vcxproj` — and the two must be kept in sync. C99 rather than C11 because
+  the GenC output relies on variable-length arrays, which C11 demotes to optional. Two warnings are
+  waived for `native/generated/pocketplus.c` only (it is machine-written): `-Wno-unused-variable`
+  and `-Wno-parentheses`. Every platform builds with the gate on, and CI adds a second Linux pass
+  with `CC=clang` — gcc and clang warn about disjoint things.
+- **32-bit builds.** The flight target is 32-bit; `build.sh` honours `CC`, so
+  `CC="cc -m32" ./native/build.sh` produces an i386 library (the dev container ships
+  `gcc-multilib`/`libc6-dev-i386` on x86 hosts for this; CI does the same). It is a *compile* gate
+  only: a 32-bit `.so` cannot be loaded by the 64-bit CPython the `pytest` suite runs under, and
+  Ubuntu no longer packages an i386 CPython, so running the suite against a 32-bit build needs an
+  i386 container. The codec itself is word-size agnostic — every value in the generated code and
+  the shim is `int32_t`/`bool`, and the ctypes binding passes only opaque handles and flat
+  `(bool*, int32_t)` pairs, never a struct layout.
 - The verification gate is **red by design today**: the Scala carries no verification invariants yet,
   so the array-bounds / overflow / termination VCs are unproven. It turns green as invariants are added.
 - To regenerate or verify outside VS, the same `java -jar tools/stainless/lib/...jar` invocations
