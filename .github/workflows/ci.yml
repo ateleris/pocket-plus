@@ -49,6 +49,9 @@ jobs:
         if: runner.os == 'Windows'
         run: powershell -File install.ps1
 
+      # C99 + -Werror lint flags live in the build scripts themselves (see native/build.sh and
+      # native/pocketplus.vcxproj), so every job below is also the lint gate for its compiler:
+      # gcc on Linux, Apple clang on macOS, clang-cl on Windows.
       - name: Build native library
         if: runner.os != 'Windows'
         run: ./native/build.sh
@@ -62,6 +65,13 @@ jobs:
       - name: Run tests
         working-directory: python
         run: pytest -m "not verify"
+
+      # Second compiler on the same OS: gcc and clang warn about disjoint things, so building
+      # once more with clang widens the lint coverage. Runs after the tests so the library they
+      # loaded is the one the primary compiler produced.
+      - name: Lint with the second C compiler (clang)
+        if: runner.os == 'Linux'
+        run: CC=clang ./native/build.sh
 
       # Linux-only (verification is slow, and one OS gives enough signal). Allowed to
       # fail: the gate is red by design until verification invariants are added.
