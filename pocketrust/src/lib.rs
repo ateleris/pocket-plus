@@ -19,3 +19,5 @@ const _: () = assert!(
 );
 
 pub const BUF_LEN: usize = (MAX_PACKET_BITS + 63) >> 6;
+
+pub const MAX_ROBUSTNESS: isize = 7;

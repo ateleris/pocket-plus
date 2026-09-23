@@ -1,4 +1,4 @@
-use crate::BUF_LEN;
+use crate::{BUF_LEN, MAX_ROBUSTNESS};
 use crate::be::{be, reverse_be_inverting};
 use crate::bitstream::BitWriter;
 use crate::count::count;
@@ -82,6 +82,10 @@ impl CompressorState {
         out_pos_i: u8,
         scratch: &mut EncodeScratch,
     ) -> (usize, u8) {
+        assert!(
+            (0..=MAX_ROBUSTNESS).contains(&robustness),
+            "robustness must be within the CCSDS 124.0-B-1 range 0..=7",
+        );
         self.t += 1;
         let p_i = (self.t as usize) & (self.p.len() - 1);
         self.p[p_i] = new_mask;
@@ -294,5 +298,47 @@ impl CompressorState {
         }
 
         (w.pos, w.idx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CompressorState, EncodeScratch};
+    use crate::BUF_LEN;
+
+    fn encode_one(robustness: isize) {
+        let mut enc = CompressorState::init(64);
+        let mut scratch = EncodeScratch::new();
+        let mut out = [0u64; 2 * BUF_LEN];
+        enc.encode(
+            &[0u64; BUF_LEN],
+            robustness,
+            false,
+            true,
+            true,
+            &mut out,
+            0,
+            0,
+            &mut scratch,
+        );
+    }
+
+    #[test]
+    fn accepts_robustness_0_to_7() {
+        for r in 0..=7 {
+            encode_one(r);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "robustness")]
+    fn rejects_robustness_above_7() {
+        encode_one(8);
+    }
+
+    #[test]
+    #[should_panic(expected = "robustness")]
+    fn rejects_negative_robustness() {
+        encode_one(-1);
     }
 }
