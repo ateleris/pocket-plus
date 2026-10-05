@@ -21,8 +21,18 @@ const _: () = assert!(
     "MAX_PACKET_BITS must be within the CCSDS 124.0-B-1 range 1..=(2^16 - 1)",
 );
 
-/// Storage block of every bit buffer; MSB-first, so the serialized bitstream is identical for any width.
+#[cfg(all(feature = "block32", feature = "block64"))]
+compile_error!("features `block32` and `block64` are mutually exclusive");
+
+/// Storage block of every bit buffer: `usize` unless the `block32` or `block64` feature fixes it.
+/// MSB-first, so the serialized bitstream is identical for any width.
+#[cfg(not(any(feature = "block32", feature = "block64")))]
+pub type Block = usize;
+#[cfg(feature = "block32")]
+pub type Block = u32;
+#[cfg(all(feature = "block64", not(feature = "block32")))]
 pub type Block = u64;
+
 pub const BLOCK_BITS: usize = Block::BITS as usize;
 pub const BLOCK_SHIFT: u32 = Block::BITS.trailing_zeros();
 pub const BLOCK_MASK: usize = BLOCK_BITS - 1;

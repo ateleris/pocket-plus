@@ -101,9 +101,9 @@ jobs:
       #
       # These build rather than reusing the step above, which sizes reference-c's compile-time
       # CCSDS124_MAX_PACKET_LENGTH for bench where validate needs the codec default.
-      - name: Validate reference-c + pocketrust (every dataset)
+      - name: Validate reference-c + pocketrust-u32 + pocketrust-u64 (every dataset)
         run: uv run pocket-bench validate -c config/ci.toml
-             --impl reference-c --impl pocketrust
+             --impl reference-c --impl pocketrust-u32 --impl pocketrust-u64
 
       - name: Validate reference-cpp + reference-rust (byte-aligned vectors)
         run: uv run pocket-bench validate -c config/ci.toml
