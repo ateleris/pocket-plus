@@ -3,26 +3,26 @@ use crate::bitstream::BitReader;
 use crate::count::try_read_count;
 use crate::mask::invert_mask_shift;
 use crate::rle::try_read_reverse_rle;
-use crate::{BUF_LEN, MAX_PACKET_BITS};
+use crate::{blocks_for, Block, BLOCK_BITS, BLOCK_MASK, BUF_LEN, MAX_PACKET_BITS};
 
 const MAX_VT_HISTORY: usize = 16;
 
-pub struct DecodeScratch {
-    x_t: [u64; BUF_LEN],
-    m_delta: [u64; BUF_LEN], // staged M_t; committed to self.m only when the packet is accepted
-    m_chg: [u64; BUF_LEN],   // recovered new mask values at the changed (x_t) bits; 0 elsewhere
-    xm_t: [u64; BUF_LEN],
+pub struct DecompressScratch {
+    x_t: [Block; BUF_LEN],
+    m_delta: [Block; BUF_LEN], // staged M_t; committed to self.m only when the packet is accepted
+    m_chg: [Block; BUF_LEN],   // recovered new mask values at the changed (x_t) bits; 0 elsewhere
+    xm_t: [Block; BUF_LEN],
 }
 
-impl Default for DecodeScratch {
+impl Default for DecompressScratch {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl DecodeScratch {
+impl DecompressScratch {
     pub fn new() -> Self {
-        DecodeScratch {
+        DecompressScratch {
             x_t: [0; BUF_LEN],
             m_delta: [0; BUF_LEN],
             m_chg: [0; BUF_LEN],
@@ -32,9 +32,46 @@ impl DecodeScratch {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum DecodeStatus {
+pub enum DecompressStatus {
     Guaranteed,
     Unguaranteed,
+}
+
+/// The longest compressed packet a 65535-bit field can produce, as the CCSDS 124.0 yellow book bounds it.
+pub const MAX_COMPRESSED_PACKET_BITS: usize = 622_627;
+
+/// Why a received frame cannot be decoded at all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameError {
+    ZeroLength,
+    TooLong(usize),
+    Truncated { declared: usize, available: usize },
+}
+
+impl core::fmt::Display for FrameError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            FrameError::ZeroLength => write!(f, "frame declares 0 bits"),
+            FrameError::TooLong(n) => write!(f, "frame declares {} bits, above {}", n, MAX_COMPRESSED_PACKET_BITS),
+            FrameError::Truncated { declared, available } => {
+                write!(f, "frame declares {} bits but {} arrived", declared, available)
+            }
+        }
+    }
+}
+
+/// Checks a received frame's declared length before decoding: decoding stops at a frame that fails.
+pub fn check_frame(declared_bits: usize, available_bits: usize) -> Result<(), FrameError> {
+    if declared_bits == 0 {
+        return Err(FrameError::ZeroLength);
+    }
+    if declared_bits > MAX_COMPRESSED_PACKET_BITS {
+        return Err(FrameError::TooLong(declared_bits));
+    }
+    if declared_bits > available_bits {
+        return Err(FrameError::Truncated { declared: declared_bits, available: available_bits });
+    }
+    Ok(())
 }
 
 struct DecodeFlags {
@@ -45,12 +82,12 @@ struct DecodeFlags {
 }
 
 #[derive(Clone)]
-pub struct DecompressorState {
+pub struct DecompressorContext {
     num_blocks: usize,
     last_block_bits: u8,
     f_known: bool,
-    i: [u64; BUF_LEN],
-    m: [u64; BUF_LEN],
+    i: [Block; BUF_LEN],
+    m: [Block; BUF_LEN],
     mask_inc_changed: bool,
     mask_inc_whole: bool,
     count_f_mismatch: bool,
@@ -59,9 +96,9 @@ pub struct DecompressorState {
     ring_count: usize,
 }
 
-impl DecompressorState {
+impl DecompressorContext {
     pub fn init() -> Self {
-        DecompressorState {
+        DecompressorContext {
             num_blocks: 0,
             last_block_bits: 0,
             f_known: false,
@@ -92,20 +129,15 @@ impl DecompressorState {
     
     fn f(&self) -> usize {
         if self.last_block_bits == 0 {
-            self.num_blocks * 64
+            self.num_blocks * BLOCK_BITS
         } else {
-            (self.num_blocks - 1) * 64 + self.last_block_bits as usize
+            (self.num_blocks - 1) * BLOCK_BITS + self.last_block_bits as usize
         }
     }
 
     fn set_f(&mut self, f: u16) {
-        let mut num_blocks = (f as usize) >> 6;
-        let last_block_bits = (f & 63) as u8;
-        if last_block_bits > 0 {
-            num_blocks += 1;
-        }
-        self.num_blocks = num_blocks;
-        self.last_block_bits = last_block_bits;
+        self.num_blocks = blocks_for(f as usize);
+        self.last_block_bits = (f as usize & BLOCK_MASK) as u8;
         self.f_known = true;
     }
 
@@ -119,14 +151,14 @@ impl DecompressorState {
         }
     }
 
-    fn decode_internal(
+    fn decompress_internal(
         &mut self,
-        input: &[u64],
+        input: &[Block],
         in_pos: usize,
         in_pos_i: u8,
         num_bits: usize,
-        i_out: &mut [u64],
-        s: &mut DecodeScratch,
+        i_out: &mut [Block],
+        s: &mut DecompressScratch,
     ) -> Option<DecodeFlags> {
         self.mask_inc_changed = false;
         self.mask_inc_whole = false;
@@ -162,11 +194,11 @@ impl DecompressorState {
         let dot_d_t = r.try_bit()? == 1;
 
         // q_t
-        let mut m_full: Option<[u64; BUF_LEN]> = None;
+        let mut m_full: Option<[Block; BUF_LEN]> = None;
         if !dot_d_t {
             let send_mask = r.try_bit()? == 1;
             if send_mask {
-                let mut shift = [0u64; BUF_LEN];
+                let mut shift: [Block; BUF_LEN] = [0; BUF_LEN];
                 let (m_span, _) = try_read_reverse_rle(&mut r, f, &mut shift)?;
                 if m_span > f {
                     return None;
@@ -219,7 +251,7 @@ impl DecompressorState {
         // u_t
         let mut rt = false;
         if dot_d_t {
-            let mask: &[u64] = if c_t == 1 {
+            let mask: &[Block] = if c_t == 1 {
                 &s.xm_t[..n]
             } else {
                 &s.m_delta[..n]
@@ -236,9 +268,9 @@ impl DecompressorState {
                 for i in 0..n {
                     if self.last_block_bits != 0 && i == n - 1 {
                         let bits = self.last_block_bits;
-                        i_out[i] = r.try_read(bits)? << (64 - bits);
+                        i_out[i] = r.try_read(bits)? << (BLOCK_BITS - bits as usize);
                     } else {
-                        i_out[i] = r.try_read(64)?;
+                        i_out[i] = r.try_read(BLOCK_BITS as u8)?;
                     }
                 }
             } else if c_t == 1 {
@@ -280,22 +312,22 @@ impl DecompressorState {
         false
     }
 
-    pub fn decode(
+    pub fn decompress(
         &mut self,
-        input: &[u64],
+        input: &[Block],
         in_pos: usize,
         in_pos_i: u8,
         num_bits: usize,
-        i_out: &mut [u64],
-        scratch: &mut DecodeScratch,
-    ) -> (DecodeStatus, usize, u8) {
+        i_out: &mut [Block],
+        scratch: &mut DecompressScratch,
+    ) -> (DecompressStatus, usize, u8) {
         if !self.f_known {
             match discover_at(input, in_pos, in_pos_i, num_bits) {
                 Discovery::Strict(f) => {
                     let pending = self.clone();
                     self.set_f(f);
-                    let result = self.decode(input, in_pos, in_pos_i, num_bits, i_out, scratch);
-                    if result.0 != DecodeStatus::Guaranteed {
+                    let result = self.decompress(input, in_pos, in_pos_i, num_bits, i_out, scratch);
+                    if result.0 != DecompressStatus::Guaranteed {
                         *self = pending;
                     }
                     return result;
@@ -303,25 +335,25 @@ impl DecompressorState {
                 Discovery::Weak { f, vt } => {
                     let pending = self.clone();
                     self.set_f(f);
-                    let _ = self.decode_internal(input, in_pos, in_pos_i, num_bits, i_out, scratch);
+                    let _ = self.decompress_internal(input, in_pos, in_pos_i, num_bits, i_out, scratch);
                     let mask_reject = self.mask_inc_changed && vt > 0;
                     *self = pending;
                     if mask_reject {
-                        return (DecodeStatus::Unguaranteed, in_pos, in_pos_i);
+                        return (DecompressStatus::Unguaranteed, in_pos, in_pos_i);
                     }
                     self.set_f(f);
                     self.notify_packet_undecodable();
-                    return (DecodeStatus::Unguaranteed, in_pos, in_pos_i);
+                    return (DecompressStatus::Unguaranteed, in_pos, in_pos_i);
                 }
-                Discovery::None => return (DecodeStatus::Unguaranteed, in_pos, in_pos_i),
+                Discovery::None => return (DecompressStatus::Unguaranteed, in_pos, in_pos_i),
             }
         }
 
-        let flags = match self.decode_internal(input, in_pos, in_pos_i, num_bits, i_out, scratch) {
+        let flags = match self.decompress_internal(input, in_pos, in_pos_i, num_bits, i_out, scratch) {
             Some(f) => f,
             None => {
                 self.push_status(0x01);
-                return (DecodeStatus::Unguaranteed, in_pos, in_pos_i);
+                return (DecompressStatus::Unguaranteed, in_pos, in_pos_i);
             }
         };
 
@@ -353,9 +385,9 @@ impl DecompressorState {
 
         self.push_status(status);
         let verdict = if status == 0x00 {
-            DecodeStatus::Guaranteed
+            DecompressStatus::Guaranteed
         } else {
-            DecodeStatus::Unguaranteed
+            DecompressStatus::Unguaranteed
         };
         (verdict, flags.next_pos, flags.next_idx)
     }
@@ -367,11 +399,11 @@ enum Discovery {
     None,
 }
 
-fn discover_at(data: &[u64], in_pos: usize, in_pos_i: u8, num_bits: usize) -> Discovery {
+fn discover_at(data: &[Block], in_pos: usize, in_pos_i: u8, num_bits: usize) -> Discovery {
     const CAP: usize = MAX_PACKET_BITS;
     let mut r = BitReader::with_len(data, in_pos, in_pos_i, num_bits);
 
-    let mut scratch = [0u64; BUF_LEN];
+    let mut scratch: [Block; BUF_LEN] = [0; BUF_LEN];
     let (x_span, x_ones) = match try_read_reverse_rle(&mut r, CAP, &mut scratch) {
         Some(v) => v,
         None => return Discovery::None,
@@ -442,5 +474,32 @@ fn discover_at(data: &[u64], in_pos: usize, in_pos_i: u8, num_bits: usize) -> Di
         Discovery::Weak { f: f as u16, vt: v_t as u8 }
     } else {
         Discovery::Strict(f as u16)
+    }
+}
+
+#[cfg(test)]
+mod frame_tests {
+    use super::{check_frame, FrameError, MAX_COMPRESSED_PACKET_BITS};
+
+    #[test]
+    fn accepts_a_frame_within_bounds() {
+        assert_eq!(check_frame(100, 104), Ok(()));
+        assert_eq!(check_frame(MAX_COMPRESSED_PACKET_BITS, MAX_COMPRESSED_PACKET_BITS), Ok(()));
+    }
+
+    #[test]
+    fn rejects_a_zero_length() {
+        assert_eq!(check_frame(0, 64), Err(FrameError::ZeroLength));
+    }
+
+    #[test]
+    fn rejects_a_length_no_packet_can_have() {
+        assert_eq!(check_frame(MAX_COMPRESSED_PACKET_BITS + 1, usize::MAX),
+                   Err(FrameError::TooLong(MAX_COMPRESSED_PACKET_BITS + 1)));
+    }
+
+    #[test]
+    fn rejects_a_frame_cut_off_before_its_declared_end() {
+        assert_eq!(check_frame(100, 96), Err(FrameError::Truncated { declared: 100, available: 96 }));
     }
 }
