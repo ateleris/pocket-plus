@@ -1,6 +1,15 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "trace")]
+macro_rules! trace {
+    ($($body:tt)*) => { $($body)* };
+}
+#[cfg(not(feature = "trace"))]
+macro_rules! trace {
+    ($($body:tt)*) => {};
+}
+
 pub mod be;
 pub mod bitstream;
 pub mod compressor;
@@ -8,12 +17,16 @@ pub mod count;
 pub mod decompressor;
 pub mod mask;
 pub mod rle;
+#[cfg(feature = "trace")]
+pub mod trace;
 
 pub use compressor::{CompressError, CompressScratch, CompressorContext};
 pub use decompressor::{
     DecompressScratch, DecompressStatus, DecompressorContext, FrameError,
     MAX_COMPRESSED_PACKET_BITS, check_frame,
 };
+#[cfg(feature = "trace")]
+pub use trace::{CompressTrace, DecompressTrace, Seg, Segments, Span, SEGS};
 
 pub const MAX_PACKET_BITS: usize = (1 << 16) - 1; // 65535
 const _: () = assert!(
