@@ -3,6 +3,8 @@ use crate::be::{be, reverse_be_inverting};
 use crate::bitstream::BitWriter;
 use crate::count::count;
 use crate::rle::reverse_rle;
+#[cfg(feature = "trace")]
+use crate::trace::{CompressTrace, Marker, Seg, Segments};
 
 pub struct CompressScratch {
     x_t: [Block; BUF_LEN],
@@ -65,6 +67,8 @@ pub struct CompressorContext {
     num_d_zeros: u8,
     p: [bool; 16],
     d_zero: [bool; 8],
+    #[cfg(feature = "trace")]
+    trace: CompressTrace,
 }
 
 impl CompressorContext {
@@ -83,6 +87,8 @@ impl CompressorContext {
             num_d_zeros: 0,
             p: [false; 16],
             d_zero: [true; 8],
+            #[cfg(feature = "trace")]
+            trace: CompressTrace::new(),
         }
     }
 
@@ -176,6 +182,17 @@ impl CompressorContext {
             self.i[..nb].copy_from_slice(&i_t[..nb]);
         }
 
+        trace!(
+            self.trace.t = self.t;
+            if self.t == 0 {
+                self.trace.d_t[..nb].fill(0);
+            } else {
+                self.trace.d_t[..nb].copy_from_slice(&self.d[d_t_i][..nb]);
+            }
+            self.trace.m_t[..nb].copy_from_slice(&self.m[..nb]);
+            self.trace.b_t[..nb].copy_from_slice(&self.b[..nb]);
+        );
+
         // 5.3.2 accuracy window
         let dot_d_t = !send_mask && !uncompressed;
         let t = self.t as usize;
@@ -204,6 +221,10 @@ impl CompressorContext {
         if self.t - robustness <= 0 {
             v_t = robustness;
         }
+        trace!(
+            self.trace.v_t = v_t;
+            self.trace.big_c_t = big_c_t;
+        );
 
         // 5.3.3.1 x_t
         let x_t_zero;
@@ -243,10 +264,17 @@ impl CompressorContext {
             x_t_zero = !any;
         }
 
+        trace!(self.trace.x_t[..nb].copy_from_slice(&scratch.x_t[..nb]););
         let skip = ((BLOCK_BITS - self.last_block_bits as usize) & BLOCK_MASK) as u16;
         let mut w = BitWriter::new(out, out_pos, out_pos_i);
+        trace!(
+            self.trace.segments = Segments::new();
+            let mut mk = Marker::new(w.bit_pos());
+        );
         reverse_rle(&scratch.x_t[..nb], skip, &mut w);
+        trace!(mk.cut(&mut self.trace.segments, Seg::RleX, w.bit_pos()););
         w.add_bits(v_t as Block, 4);
+        trace!(mk.cut(&mut self.trace.segments, Seg::Vt, w.bit_pos()););
 
         // y_t
         scratch.y_t[..nb].fill(0);
@@ -268,6 +296,10 @@ impl CompressorContext {
             let bit = if y_t_zero { 0 } else { 1 };
             w.add_bits(bit, 1);
         }
+        trace!(
+            self.trace.e_t = if v_t == 0 || x_t_zero { None } else { Some(!y_t_zero) };
+            mk.cut(&mut self.trace.segments, Seg::Et, w.bit_pos());
+        );
 
         // k_t
         let mut c_t: i8 = -1;
@@ -278,6 +310,7 @@ impl CompressorContext {
             if y_t_pos_i > 0 {
                 w.add_bits(scratch.y_t[y_t_pos] >> (BLOCK_BITS - y_t_pos_i as usize), y_t_pos_i);
             }
+            trace!(mk.cut(&mut self.trace.segments, Seg::Kt, w.bit_pos()););
             let mut p_set = 0;
             for tt in 0.max(self.t - v_t)..(self.t + 1) {
                 if self.p[(tt as usize) & (self.p.len() - 1)] {
@@ -286,10 +319,16 @@ impl CompressorContext {
             }
             c_t = if p_set <= 1 { 0 } else { 1 };
             w.add_bits(c_t as Block, 1);
+            trace!(mk.cut(&mut self.trace.segments, Seg::Ct, w.bit_pos()););
         }
+        trace!(self.trace.c_t = if c_t < 0 { None } else { Some(c_t == 1) };);
 
         // d_t
         w.add_bits(dot_d_t as Block, 1);
+        trace!(
+            self.trace.dot_d_t = dot_d_t;
+            mk.cut(&mut self.trace.segments, Seg::Dt, w.bit_pos());
+        );
 
         // 5.3.3.2 q_t
         if !dot_d_t {
@@ -304,6 +343,7 @@ impl CompressorContext {
                 w.add_bits(0, 1);
             }
         }
+        trace!(mk.cut(&mut self.trace.segments, Seg::Qt, w.bit_pos()););
 
         // 5.3.3.3 u_t
         if dot_d_t && c_t == 1 {
@@ -340,7 +380,34 @@ impl CompressorContext {
             be(&i_t[..nb], &self.m[..nb], &mut w);
         }
 
+        trace!(
+            mk.cut(&mut self.trace.segments, Seg::Ut, w.bit_pos());
+            self.trace.len_bits = mk.finish(&mut self.trace.segments);
+        );
         Ok((w.pos, w.idx))
+    }
+}
+
+#[cfg(feature = "trace")]
+impl CompressorContext {
+    pub fn last_trace(&self) -> &CompressTrace {
+        &self.trace
+    }
+
+    pub fn t(&self) -> isize {
+        self.t
+    }
+
+    pub fn state_i(&self) -> &[Block] {
+        &self.i[..self.num_blocks]
+    }
+
+    pub fn state_m(&self) -> &[Block] {
+        &self.m[..self.num_blocks]
+    }
+
+    pub fn state_b(&self) -> &[Block] {
+        &self.b[..self.num_blocks]
     }
 }
 

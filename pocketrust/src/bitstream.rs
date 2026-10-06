@@ -14,6 +14,12 @@ impl<'a> BitWriter<'a> {
         Self { data, pos, idx }
     }
 
+    #[cfg(feature = "trace")]
+    #[inline]
+    pub fn bit_pos(&self) -> usize {
+        self.pos * BLOCK_BITS + self.idx as usize
+    }
+
     /// Append the low `num_bits` of `val` MSB-first, advancing the cursor.
     #[inline]
     pub fn add_bits(&mut self, val: Block, num_bits: u8) {
@@ -72,7 +78,7 @@ impl<'a> BitReader<'a> {
 
     /// Current absolute bit position from the start of `data`.
     #[inline]
-    fn bit_pos(&self) -> usize {
+    pub(crate) fn bit_pos(&self) -> usize {
         self.pos * BLOCK_BITS + self.idx as usize
     }
 

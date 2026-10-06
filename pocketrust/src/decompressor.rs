@@ -4,6 +4,8 @@ use crate::count::try_read_count;
 use crate::mask::invert_mask_shift;
 use crate::rle::try_read_reverse_rle;
 use crate::{blocks_for, Block, BLOCK_BITS, BLOCK_MASK, BUF_LEN, MAX_PACKET_BITS};
+#[cfg(feature = "trace")]
+use crate::trace::{DecompressTrace, Seg};
 
 const MAX_VT_HISTORY: usize = 16;
 
@@ -94,6 +96,8 @@ pub struct DecompressorContext {
     ring: [u8; MAX_VT_HISTORY],
     ring_index: usize,
     ring_count: usize,
+    #[cfg(feature = "trace")]
+    trace: DecompressTrace,
 }
 
 impl DecompressorContext {
@@ -110,6 +114,8 @@ impl DecompressorContext {
             ring: [0; MAX_VT_HISTORY],
             ring_index: 0,
             ring_count: 0,
+            #[cfg(feature = "trace")]
+            trace: DecompressTrace::new(),
         }
     }
 
@@ -166,6 +172,7 @@ impl DecompressorContext {
         let n = self.num_blocks;
         let f = self.f();
         let mut r = BitReader::with_len(input, in_pos, in_pos_i, num_bits);
+        trace!(self.trace.begin(r.bit_pos()););
 
         // h_t
         s.x_t[..n].fill(0);
@@ -174,29 +181,59 @@ impl DecompressorContext {
             return None;
         }
         let x_t_zero = x_ones == 0;
+        trace!(
+            self.trace.cut(Seg::RleX, r.bit_pos());
+            self.trace.x_t[..n].copy_from_slice(&s.x_t[..n]);
+            self.trace.reading = Seg::Vt;
+        );
 
         let v_t = r.try_read(4)? as isize;
+        trace!(
+            self.trace.cut(Seg::Vt, r.bit_pos());
+            self.trace.v_t = Some(v_t as u8);
+        );
 
         // e_t / k_t
         let mut c_t: i8 = -1;
         let mut y_present = false;
         if !(v_t == 0 || x_t_zero) {
+            trace!(self.trace.reading = Seg::Et;);
             let e_t = r.try_bit()?;
+            trace!(
+                self.trace.cut(Seg::Et, r.bit_pos());
+                self.trace.e_t = Some(e_t == 1);
+            );
             if e_t == 1 {
+                trace!(self.trace.reading = Seg::Kt;);
                 s.m_chg[..n].fill(0);
                 let (xt, mchg) = (&s.x_t, &mut s.m_chg);
                 try_read_reverse_be_inverting(&mut r, &xt[..n], mchg)?;
+                trace!(
+                    self.trace.cut(Seg::Kt, r.bit_pos());
+                    self.trace.reading = Seg::Ct;
+                );
                 y_present = true;
                 c_t = r.try_bit()? as i8;
+                trace!(
+                    self.trace.cut(Seg::Ct, r.bit_pos());
+                    self.trace.c_t = Some(c_t == 1);
+                );
             }
         }
 
+        trace!(self.trace.reading = Seg::Dt;);
         let dot_d_t = r.try_bit()? == 1;
+        trace!(
+            self.trace.cut(Seg::Dt, r.bit_pos());
+            self.trace.dot_d_t = Some(dot_d_t);
+            self.trace.reading = Seg::Qt;
+        );
 
         // q_t
         let mut m_full: Option<[Block; BUF_LEN]> = None;
         if !dot_d_t {
             let send_mask = r.try_bit()? == 1;
+            trace!(self.trace.send_mask = Some(send_mask););
             if send_mask {
                 let mut shift: [Block; BUF_LEN] = [0; BUF_LEN];
                 let (m_span, _) = try_read_reverse_rle(&mut r, f, &mut shift)?;
@@ -206,6 +243,7 @@ impl DecompressorContext {
                 m_full = Some(invert_mask_shift(&shift, f));
             }
         }
+        trace!(self.trace.cut(Seg::Qt, r.bit_pos()););
 
         // Mask update
         if x_t_zero {
@@ -240,6 +278,17 @@ impl DecompressorContext {
             self.mask_inc_changed = inc_changed;
             s.m_delta[..n].copy_from_slice(&m_full[..n]);
         }
+        trace!(
+            self.trace.m_staged[..n].copy_from_slice(&s.m_delta[..n]);
+            if y_present {
+                self.trace.m_chg[..n].copy_from_slice(&s.m_chg[..n]);
+            }
+            self.trace.has_m_full = m_full.is_some();
+            if let Some(m) = m_full.as_ref() {
+                self.trace.m_full[..n].copy_from_slice(&m[..n]);
+            }
+            self.trace.reading = Seg::Ut;
+        );
 
         // xm_t (X_t OR M_t)
         if c_t == 1 {
@@ -260,6 +309,7 @@ impl DecompressorContext {
         } else {
             let uncompressed_bit = r.try_bit()?;
             rt = uncompressed_bit == 1;
+            trace!(self.trace.uncompressed = Some(rt););
             if rt {
                 let count_f = try_read_count(&mut r)?;
                 if count_f as usize != f {
@@ -280,6 +330,10 @@ impl DecompressorContext {
             }
         }
 
+        trace!(
+            self.trace.cut(Seg::Ut, r.bit_pos());
+            self.trace.mk.finish(&mut self.trace.segments);
+        );
         Some(DecodeFlags {
             vt: (v_t as u8) & 0x0F,
             rt,
@@ -321,6 +375,7 @@ impl DecompressorContext {
         i_out: &mut [Block],
         scratch: &mut DecompressScratch,
     ) -> (DecompressStatus, usize, u8) {
+        trace!(self.trace.reset(););
         if !self.f_known {
             match discover_at(input, in_pos, in_pos_i, num_bits) {
                 Discovery::Strict(f) => {
@@ -328,24 +383,52 @@ impl DecompressorContext {
                     self.set_f(f);
                     let result = self.decompress(input, in_pos, in_pos_i, num_bits, i_out, scratch);
                     if result.0 != DecompressStatus::Guaranteed {
+                        trace!(
+                            let mut pending = pending;
+                            core::mem::swap(&mut self.trace, &mut pending.trace);
+                        );
                         *self = pending;
+                        trace!(self.trace_commit(0x01););
                     }
                     return result;
                 }
                 Discovery::Weak { f, vt } => {
                     let pending = self.clone();
                     self.set_f(f);
-                    let _ = self.decompress_internal(input, in_pos, in_pos_i, num_bits, i_out, scratch);
+                    let _parsed = self.decompress_internal(input, in_pos, in_pos_i, num_bits, i_out, scratch);
                     let mask_reject = self.mask_inc_changed && vt > 0;
+                    trace!(
+                        if _parsed.is_none() {
+                            self.trace.fail();
+                        }
+                        self.trace.mask_inc_whole = self.mask_inc_whole;
+                        self.trace.mask_inc_changed = self.mask_inc_changed;
+                        let mut pending = pending;
+                        core::mem::swap(&mut self.trace, &mut pending.trace);
+                    );
                     *self = pending;
                     if mask_reject {
+                        trace!(
+                            self.trace.f_rejected = true;
+                            self.trace_commit(0x01);
+                        );
                         return (DecompressStatus::Unguaranteed, in_pos, in_pos_i);
                     }
                     self.set_f(f);
                     self.notify_packet_undecodable();
+                    trace!(
+                        self.trace.weak_discovery = true;
+                        self.trace_commit(0x01);
+                    );
                     return (DecompressStatus::Unguaranteed, in_pos, in_pos_i);
                 }
-                Discovery::None => return (DecompressStatus::Unguaranteed, in_pos, in_pos_i),
+                Discovery::None => {
+                    trace!(
+                        self.trace.f_unknown = true;
+                        self.trace_commit(0x01);
+                    );
+                    return (DecompressStatus::Unguaranteed, in_pos, in_pos_i);
+                }
             }
         }
 
@@ -353,6 +436,10 @@ impl DecompressorContext {
             Some(f) => f,
             None => {
                 self.push_status(0x01);
+                trace!(
+                    self.trace.fail();
+                    self.trace_commit(0x01);
+                );
                 return (DecompressStatus::Unguaranteed, in_pos, in_pos_i);
             }
         };
@@ -384,12 +471,45 @@ impl DecompressorContext {
         };
 
         self.push_status(status);
+        trace!(
+            self.trace.mask_inc_whole = self.mask_inc_whole;
+            self.trace.mask_inc_changed = self.mask_inc_changed;
+            self.trace.count_f_mismatch = self.count_f_mismatch;
+            self.trace.vt_gap_ok = Some(vt_ok);
+            self.trace_commit(status);
+        );
         let verdict = if status == 0x00 {
             DecompressStatus::Guaranteed
         } else {
             DecompressStatus::Unguaranteed
         };
         (verdict, flags.next_pos, flags.next_idx)
+    }
+}
+
+#[cfg(feature = "trace")]
+impl DecompressorContext {
+    pub fn last_trace(&self) -> &DecompressTrace {
+        &self.trace
+    }
+
+    pub fn state_m(&self) -> &[Block] {
+        &self.m[..self.num_blocks]
+    }
+
+    pub fn state_i(&self) -> &[Block] {
+        &self.i[..self.num_blocks]
+    }
+
+    fn trace_commit(&mut self, status: u8) {
+        let n = self.num_blocks;
+        self.trace.status = status;
+        self.trace.m_committed[..n].copy_from_slice(&self.m[..n]);
+        let first = (self.ring_index + MAX_VT_HISTORY - self.ring_count) & (MAX_VT_HISTORY - 1);
+        for k in 0..self.ring_count {
+            self.trace.ring[k] = self.ring[(first + k) & (MAX_VT_HISTORY - 1)];
+        }
+        self.trace.ring_len = self.ring_count;
     }
 }
 
