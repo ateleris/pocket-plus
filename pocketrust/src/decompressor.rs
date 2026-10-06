@@ -8,6 +8,9 @@ use crate::{blocks_for, Block, BLOCK_BITS, BLOCK_MASK, BUF_LEN, MAX_PACKET_BITS}
 use crate::trace::{DecompressTrace, Seg};
 
 const MAX_VT_HISTORY: usize = 16;
+const STATUS_DECODED: u8 = 0x00;
+/// Ring-only: decoded correctly, but the mask is not synchronized, so `vt_gap_ok` does not count it.
+const STATUS_DECODED_MASK_UNSYNCED: u8 = 0x03;
 
 pub struct DecompressScratch {
     x_t: [Block; BUF_LEN],
@@ -79,6 +82,8 @@ pub fn check_frame(declared_bits: usize, available_bits: usize) -> Result<(), Fr
 struct DecodeFlags {
     vt: u8,
     rt: bool,
+    full_mask: bool,
+    x_all_ones: bool,
     next_pos: usize,
     next_idx: u8,
 }
@@ -337,6 +342,8 @@ impl DecompressorContext {
         Some(DecodeFlags {
             vt: (v_t as u8) & 0x0F,
             rt,
+            full_mask: m_full.is_some(),
+            x_all_ones: x_ones as usize == f,
             next_pos: r.pos,
             next_idx: r.idx,
         })
@@ -461,10 +468,13 @@ impl DecompressorContext {
             vt_ok
         };
 
+        // Green book 3.3.4.2 d): an uncompressed packet without the full mask after a mask gap longer than V_t
+        // restores I_t but not the mask, so it must not serve as a restart point for later packets.
+        let restart_point = !flags.rt || flags.full_mask || vt_ok || (flags.vt > 0 && flags.x_all_ones);
         let status = if guaranteed {
             self.i[..self.num_blocks].copy_from_slice(&i_out[..self.num_blocks]);
             self.m[..self.num_blocks].copy_from_slice(&scratch.m_delta[..self.num_blocks]);
-            0x00
+            if restart_point { STATUS_DECODED } else { STATUS_DECODED_MASK_UNSYNCED }
         } else {
             // Rejected
             0x01
@@ -478,7 +488,7 @@ impl DecompressorContext {
             self.trace.vt_gap_ok = Some(vt_ok);
             self.trace_commit(status);
         );
-        let verdict = if status == 0x00 {
+        let verdict = if guaranteed {
             DecompressStatus::Guaranteed
         } else {
             DecompressStatus::Unguaranteed
