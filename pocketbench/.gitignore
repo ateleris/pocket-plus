@@ -25,13 +25,14 @@ results/
 implementations/
 
 # adapter build artifacts
+tests/fixtures/adapters/*/build/
+tests/fixtures/adapters/*/target/
+tests/fixtures/adapters/*/Cargo.lock
 adapters/*/build/
 adapters/*/target/
 adapters/common/rust/*/target/
 # the shared crate is only ever built as a path dependency, so its lock file is never read
 adapters/common/rust/*/Cargo.lock
-# rendered from Cargo.toml.in at build time
-adapters/reference-rust/Cargo.toml
 
 # data placed inside a datasets/ folder is not committed; keep only dataset.toml
 datasets/*/data/
