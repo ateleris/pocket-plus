@@ -16,7 +16,7 @@ impl<'a> BitWriter<'a> {
 
     #[cfg(feature = "trace")]
     #[inline]
-    pub fn bit_pos(&self) -> usize {
+    pub(crate) fn bit_pos(&self) -> usize {
         self.pos * BLOCK_BITS + self.idx as usize
     }
 

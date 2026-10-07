@@ -3,11 +3,11 @@ use crate::bitstream::BitReader;
 use crate::count::try_read_count;
 use crate::mask::invert_mask_shift;
 use crate::rle::try_read_reverse_rle;
-use crate::{blocks_for, Block, BLOCK_BITS, BLOCK_MASK, BUF_LEN, MAX_PACKET_BITS};
 #[cfg(feature = "trace")]
 use crate::trace::{DecompressTrace, Seg};
+use crate::{BLOCK_BITS, BLOCK_MASK, BUF_LEN, Block, MAX_PACKET_BITS, blocks_for};
 
-const MAX_VT_HISTORY: usize = 16;
+pub(crate) const MAX_VT_HISTORY: usize = 16;
 const STATUS_DECODED: u8 = 0x00;
 /// Ring-only: decoded correctly, but the mask is not synchronized, so `vt_gap_ok` does not count it.
 const STATUS_DECODED_MASK_UNSYNCED: u8 = 0x03;
@@ -57,9 +57,20 @@ impl core::fmt::Display for FrameError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             FrameError::ZeroLength => write!(f, "frame declares 0 bits"),
-            FrameError::TooLong(n) => write!(f, "frame declares {} bits, above {}", n, MAX_COMPRESSED_PACKET_BITS),
-            FrameError::Truncated { declared, available } => {
-                write!(f, "frame declares {} bits but {} arrived", declared, available)
+            FrameError::TooLong(n) => write!(
+                f,
+                "frame declares {} bits, above {}",
+                n, MAX_COMPRESSED_PACKET_BITS
+            ),
+            FrameError::Truncated {
+                declared,
+                available,
+            } => {
+                write!(
+                    f,
+                    "frame declares {} bits but {} arrived",
+                    declared, available
+                )
             }
         }
     }
@@ -74,7 +85,10 @@ pub fn check_frame(declared_bits: usize, available_bits: usize) -> Result<(), Fr
         return Err(FrameError::TooLong(declared_bits));
     }
     if declared_bits > available_bits {
-        return Err(FrameError::Truncated { declared: declared_bits, available: available_bits });
+        return Err(FrameError::Truncated {
+            declared: declared_bits,
+            available: available_bits,
+        });
     }
     Ok(())
 }
@@ -137,7 +151,7 @@ impl DecompressorContext {
             None
         }
     }
-    
+
     fn f(&self) -> usize {
         if self.last_block_bits == 0 {
             self.num_blocks * BLOCK_BITS
@@ -155,7 +169,7 @@ impl DecompressorContext {
     pub fn notify_packet_undecodable(&mut self) {
         self.push_status(0x01);
     }
-    
+
     pub fn notify_packet_loss(&mut self, lost_count: usize) {
         for _ in 0..lost_count {
             self.push_status(0x02);
@@ -177,7 +191,10 @@ impl DecompressorContext {
         let n = self.num_blocks;
         let f = self.f();
         let mut r = BitReader::with_len(input, in_pos, in_pos_i, num_bits);
-        trace!(self.trace.begin(r.bit_pos()););
+        trace!(
+            self.trace.begin(r.bit_pos());
+            self.trace.f = Some(f as u16);
+        );
 
         // h_t
         s.x_t[..n].fill(0);
@@ -189,6 +206,7 @@ impl DecompressorContext {
         trace!(
             self.trace.cut(Seg::RleX, r.bit_pos());
             self.trace.x_t[..n].copy_from_slice(&s.x_t[..n]);
+            self.trace.has_x_t = true;
             self.trace.reading = Seg::Vt;
         );
 
@@ -215,6 +233,8 @@ impl DecompressorContext {
                 try_read_reverse_be_inverting(&mut r, &xt[..n], mchg)?;
                 trace!(
                     self.trace.cut(Seg::Kt, r.bit_pos());
+                    self.trace.m_chg[..n].copy_from_slice(&s.m_chg[..n]);
+                    self.trace.has_m_chg = true;
                     self.trace.reading = Seg::Ct;
                 );
                 y_present = true;
@@ -285,9 +305,7 @@ impl DecompressorContext {
         }
         trace!(
             self.trace.m_staged[..n].copy_from_slice(&s.m_delta[..n]);
-            if y_present {
-                self.trace.m_chg[..n].copy_from_slice(&s.m_chg[..n]);
-            }
+            self.trace.has_m_staged = true;
             self.trace.has_m_full = m_full.is_some();
             if let Some(m) = m_full.as_ref() {
                 self.trace.m_full[..n].copy_from_slice(&m[..n]);
@@ -402,7 +420,8 @@ impl DecompressorContext {
                 Discovery::Weak { f, vt } => {
                     let pending = self.clone();
                     self.set_f(f);
-                    let _parsed = self.decompress_internal(input, in_pos, in_pos_i, num_bits, i_out, scratch);
+                    let _parsed =
+                        self.decompress_internal(input, in_pos, in_pos_i, num_bits, i_out, scratch);
                     let mask_reject = self.mask_inc_changed && vt > 0;
                     trace!(
                         if _parsed.is_none() {
@@ -439,17 +458,18 @@ impl DecompressorContext {
             }
         }
 
-        let flags = match self.decompress_internal(input, in_pos, in_pos_i, num_bits, i_out, scratch) {
-            Some(f) => f,
-            None => {
-                self.push_status(0x01);
-                trace!(
-                    self.trace.fail();
-                    self.trace_commit(0x01);
-                );
-                return (DecompressStatus::Unguaranteed, in_pos, in_pos_i);
-            }
-        };
+        let flags =
+            match self.decompress_internal(input, in_pos, in_pos_i, num_bits, i_out, scratch) {
+                Some(f) => f,
+                None => {
+                    self.push_status(0x01);
+                    trace!(
+                        self.trace.fail();
+                        self.trace_commit(0x01);
+                    );
+                    return (DecompressStatus::Unguaranteed, in_pos, in_pos_i);
+                }
+            };
 
         let vt_ok = self.vt_gap_ok(flags.vt);
         let mchg_fatal = if flags.rt {
@@ -470,11 +490,17 @@ impl DecompressorContext {
 
         // Green book 3.3.4.2 d): an uncompressed packet without the full mask after a mask gap longer than V_t
         // restores I_t but not the mask, so it must not serve as a restart point for later packets.
-        let restart_point = !flags.rt || flags.full_mask || vt_ok || (flags.vt > 0 && flags.x_all_ones);
+        let restart_point =
+            !flags.rt || flags.full_mask || vt_ok || (flags.vt > 0 && flags.x_all_ones);
+
         let status = if guaranteed {
             self.i[..self.num_blocks].copy_from_slice(&i_out[..self.num_blocks]);
             self.m[..self.num_blocks].copy_from_slice(&scratch.m_delta[..self.num_blocks]);
-            if restart_point { STATUS_DECODED } else { STATUS_DECODED_MASK_UNSYNCED }
+            if restart_point {
+                STATUS_DECODED
+            } else {
+                STATUS_DECODED_MASK_UNSYNCED
+            }
         } else {
             // Rejected
             0x01
@@ -601,7 +627,10 @@ fn discover_at(data: &[Block], in_pos: usize, in_pos_i: u8, num_bits: usize) -> 
     }
 
     if r.remaining() < f {
-        Discovery::Weak { f: f as u16, vt: v_t as u8 }
+        Discovery::Weak {
+            f: f as u16,
+            vt: v_t as u8,
+        }
     } else {
         Discovery::Strict(f as u16)
     }
@@ -609,12 +638,15 @@ fn discover_at(data: &[Block], in_pos: usize, in_pos_i: u8, num_bits: usize) -> 
 
 #[cfg(test)]
 mod frame_tests {
-    use super::{check_frame, FrameError, MAX_COMPRESSED_PACKET_BITS};
+    use super::{FrameError, MAX_COMPRESSED_PACKET_BITS, check_frame};
 
     #[test]
     fn accepts_a_frame_within_bounds() {
         assert_eq!(check_frame(100, 104), Ok(()));
-        assert_eq!(check_frame(MAX_COMPRESSED_PACKET_BITS, MAX_COMPRESSED_PACKET_BITS), Ok(()));
+        assert_eq!(
+            check_frame(MAX_COMPRESSED_PACKET_BITS, MAX_COMPRESSED_PACKET_BITS),
+            Ok(())
+        );
     }
 
     #[test]
@@ -624,12 +656,20 @@ mod frame_tests {
 
     #[test]
     fn rejects_a_length_no_packet_can_have() {
-        assert_eq!(check_frame(MAX_COMPRESSED_PACKET_BITS + 1, usize::MAX),
-                   Err(FrameError::TooLong(MAX_COMPRESSED_PACKET_BITS + 1)));
+        assert_eq!(
+            check_frame(MAX_COMPRESSED_PACKET_BITS + 1, usize::MAX),
+            Err(FrameError::TooLong(MAX_COMPRESSED_PACKET_BITS + 1))
+        );
     }
 
     #[test]
     fn rejects_a_frame_cut_off_before_its_declared_end() {
-        assert_eq!(check_frame(100, 96), Err(FrameError::Truncated { declared: 100, available: 96 }));
+        assert_eq!(
+            check_frame(100, 96),
+            Err(FrameError::Truncated {
+                declared: 100,
+                available: 96
+            })
+        );
     }
 }

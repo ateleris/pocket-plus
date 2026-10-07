@@ -1,4 +1,5 @@
 //! Intermediate values of the last `compress` / `decompress` call.
+use crate::decompressor::MAX_VT_HISTORY;
 use crate::{Block, BUF_LEN};
 
 /// Bits `start..start + len` of one compressed packet, counted from its first bit.
@@ -78,6 +79,9 @@ impl Marker {
 #[derive(Clone)]
 pub struct CompressTrace {
     pub t: isize,
+    pub new_mask: bool,
+    pub send_mask: bool,
+    pub uncompressed: bool,
     pub d_t: [Block; BUF_LEN],
     pub m_t: [Block; BUF_LEN],
     pub b_t: [Block; BUF_LEN],
@@ -95,6 +99,9 @@ impl CompressTrace {
     pub(crate) const fn new() -> Self {
         CompressTrace {
             t: -1,
+            new_mask: false,
+            send_mask: false,
+            uncompressed: false,
             d_t: [0; BUF_LEN],
             m_t: [0; BUF_LEN],
             b_t: [0; BUF_LEN],
@@ -112,9 +119,14 @@ impl CompressTrace {
 
 #[derive(Clone)]
 pub struct DecompressTrace {
+    /// F the packet was parsed with, also when discovery rolled it back.
+    pub f: Option<u16>,
     pub x_t: [Block; BUF_LEN],
+    pub has_x_t: bool,
     pub m_staged: [Block; BUF_LEN],
+    pub has_m_staged: bool,
     pub m_chg: [Block; BUF_LEN],
+    pub has_m_chg: bool,
     pub m_full: [Block; BUF_LEN],
     pub has_m_full: bool,
     pub m_committed: [Block; BUF_LEN],
@@ -139,7 +151,7 @@ pub struct DecompressTrace {
     /// The F of this packet was rejected because its mask contradicts the changed bits.
     pub f_rejected: bool,
     /// Status ring, oldest first; `ring_len` entries are valid.
-    pub ring: [u8; 16],
+    pub ring: [u8; MAX_VT_HISTORY],
     pub ring_len: usize,
     pub(crate) reading: Seg,
     pub(crate) mk: Marker,
@@ -148,9 +160,13 @@ pub struct DecompressTrace {
 impl DecompressTrace {
     pub(crate) const fn new() -> Self {
         DecompressTrace {
+            f: None,
             x_t: [0; BUF_LEN],
+            has_x_t: false,
             m_staged: [0; BUF_LEN],
+            has_m_staged: false,
             m_chg: [0; BUF_LEN],
+            has_m_chg: false,
             m_full: [0; BUF_LEN],
             has_m_full: false,
             m_committed: [0; BUF_LEN],
@@ -170,7 +186,7 @@ impl DecompressTrace {
             f_unknown: false,
             weak_discovery: false,
             f_rejected: false,
-            ring: [0; 16],
+            ring: [0; MAX_VT_HISTORY],
             ring_len: 0,
             reading: Seg::RleX,
             mk: Marker::new(0),
@@ -184,6 +200,10 @@ impl DecompressTrace {
         self.m_chg.fill(0);
         self.m_full.fill(0);
         self.m_committed.fill(0);
+        self.f = None;
+        self.has_x_t = false;
+        self.has_m_staged = false;
+        self.has_m_chg = false;
         self.has_m_full = false;
         self.v_t = None;
         self.e_t = None;
@@ -216,8 +236,10 @@ impl DecompressTrace {
         self.mk.cut(&mut self.segments, seg, at);
     }
 
+    /// Records where parsing stopped; the segment being read and all later ones get length 0.
     pub(crate) fn fail(&mut self) {
         self.failed_at = Some((self.reading, self.mk.offset()));
+        self.mk.finish(&mut self.segments);
     }
 }
 

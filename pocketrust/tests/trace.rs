@@ -308,3 +308,74 @@ fn a_failed_strict_discovery_shows_the_rolled_back_ring() {
     assert_eq!(dt.ring_len, 0, "the decoder rolled its status push back");
     assert_eq!(dt.status, 1);
 }
+
+#[test]
+fn the_compressor_trace_records_the_flags() {
+    let f = 64u16;
+    let mut enc = CompressorContext::init(f);
+    let v = [0 as Block; BUF_LEN];
+    compress(&mut enc, &v, &Flags { r: 1, new_mask: false, send_mask: true, uncompressed: true }, f);
+    let tr = enc.last_trace();
+    assert!(tr.send_mask && tr.uncompressed && !tr.new_mask);
+    compress(&mut enc, &v, &Flags { r: 1, new_mask: false, send_mask: true, uncompressed: true }, f);
+    compress(&mut enc, &v, &Flags { r: 1, new_mask: true, send_mask: false, uncompressed: false }, f);
+    let tr = enc.last_trace();
+    assert!(tr.new_mask && !tr.send_mask && !tr.uncompressed);
+}
+
+#[test]
+fn a_failure_in_any_segment_closes_the_remaining_ones() {
+    let f = 200u16;
+    let (buf, _, enc) = rt_packet_after_history(0x2468_1357_aaaa_5555);
+    let segs = enc.last_trace().segments;
+    for (k, s) in SEGS.iter().enumerate() {
+        let sp = segs.get(*s);
+        if sp.len == 0 {
+            continue;
+        }
+        let mut dec = DecompressorContext::init_f_known(f);
+        assert_eq!(decode(&mut dec, &buf, 0, sp.start), DecompressStatus::Unguaranteed, "{s:?}");
+        let dt = dec.last_trace();
+        assert_eq!(dt.failed_at, Some((*s, sp.start)), "{s:?}");
+        assert_eq!(dt.f, Some(f), "{s:?}");
+        for later in &SEGS[k..] {
+            assert_eq!(dt.segments.get(*later).start, sp.start, "{s:?} then {later:?}");
+            assert_eq!(dt.segments.get(*later).len, 0, "{s:?} then {later:?}");
+        }
+        assert_eq!(dt.has_x_t, k > 0, "{s:?}");
+        assert_eq!(dt.has_m_staged, *s == Seg::Ut, "{s:?}");
+        assert_eq!(dt.has_m_chg, k > SEGS.iter().position(|x| *x == Seg::Kt).unwrap(), "{s:?}");
+    }
+}
+
+#[test]
+fn the_ring_keeps_the_last_sixteen_statuses() {
+    let f = 64u16;
+    let mut enc = CompressorContext::init(f);
+    let mut dec = DecompressorContext::init_f_known(f);
+    let v = [0 as Block; BUF_LEN];
+    for t in 0..20 {
+        let (buf, len) = compress(&mut enc, &v, &schedule(t, 1), f);
+        assert_eq!(decode(&mut dec, &buf, 0, len), DecompressStatus::Guaranteed);
+    }
+    compress(&mut enc, &v, &schedule(20, 1), f);
+    dec.notify_packet_loss(1);
+    let (buf, len) = compress(&mut enc, &v, &schedule(21, 1), f);
+    decode(&mut dec, &buf, 0, len);
+    let dt = dec.last_trace();
+    assert_eq!(dt.ring.len(), 16);
+    assert_eq!(dt.ring_len, 16);
+    assert_eq!(dt.ring[14], 2);
+    assert_eq!(&dt.ring[..14], &[0; 14]);
+}
+
+#[test]
+fn a_discovery_that_fails_keeps_the_f_it_tried() {
+    let (mut buf, len, enc) = rt_packet_after_history(0x2468_1357_aaaa_5555);
+    let kt = enc.last_trace().segments.get(Seg::Kt);
+    buf[kt.start / BLOCK_BITS] ^= (1 as Block) << (BLOCK_BITS - 1 - kt.start % BLOCK_BITS);
+    let mut dec = DecompressorContext::init();
+    decode(&mut dec, &buf, 0, len);
+    assert_eq!(dec.discovered_f(), None);
+    assert_eq!(dec.last_trace().f, Some(200));
+}
