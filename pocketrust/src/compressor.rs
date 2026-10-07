@@ -184,6 +184,9 @@ impl CompressorContext {
 
         trace!(
             self.trace.t = self.t;
+            self.trace.new_mask = new_mask;
+            self.trace.send_mask = send_mask;
+            self.trace.uncompressed = uncompressed;
             if self.t == 0 {
                 self.trace.d_t[..nb].fill(0);
             } else {
