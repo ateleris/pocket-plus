@@ -56,6 +56,16 @@ impl core::fmt::Display for CompressError {
     }
 }
 
+/// What a raw packet (chapter 6 case 2) does to the compressor state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Case2 {
+    /// 6.2 case 2 (a) to (c): mask update, then the D history, C_t and V_t are zeroed and V_t ramps;
+    /// C_t never counts a D row at or before the raw packet.
+    Literal,
+    /// Mask update only. Not conformant; for comparing against `Literal`.
+    KeepD,
+}
+
 pub struct CompressorContext {
     num_blocks: usize,
     last_block_bits: u8,
@@ -67,6 +77,8 @@ pub struct CompressorContext {
     num_d_zeros: u8,
     p: [bool; 16],
     d_zero: [bool; 8],
+    ramp: Option<u8>,
+    c_floor: isize,
     #[cfg(feature = "trace")]
     trace: CompressTrace,
 }
@@ -87,13 +99,80 @@ impl CompressorContext {
             num_d_zeros: 0,
             p: [false; 16],
             d_zero: [true; 8],
+            ramp: None,
+            c_floor: -1,
             #[cfg(feature = "trace")]
             trace: CompressTrace::new(),
         }
     }
 
+    pub fn t(&self) -> isize {
+        self.t
+    }
+
+    pub fn f(&self) -> u16 {
+        if self.last_block_bits == 0 {
+            (self.num_blocks * BLOCK_BITS) as u16
+        } else {
+            ((self.num_blocks - 1) * BLOCK_BITS + self.last_block_bits as usize) as u16
+        }
+    }
+
     fn padding_ok(&self, v: &[Block]) -> bool {
         self.last_block_bits == 0 || v[self.num_blocks - 1] & (Block::MAX >> self.last_block_bits) == 0
+    }
+
+    /// Advances t and runs the mask update of 4.2; returns the ring slot of D_t.
+    fn advance(&mut self, i_t: &[Block], new_mask: bool) -> usize {
+        self.t += 1;
+        let p_i = (self.t as usize) & (self.p.len() - 1);
+        self.p[p_i] = new_mask;
+
+        let nb = self.num_blocks;
+        let d_t_i = (self.t as usize) & (self.d.len() - 1);
+
+        if self.t >= self.d.len() as isize {
+            if self.t - self.d.len() as isize <= self.c_floor {
+                self.num_d_zeros = 0;
+            } else if self.d_zero[d_t_i] {
+                self.num_d_zeros = self.num_d_zeros.saturating_add(1);
+            } else {
+                self.num_d_zeros = 0;
+            }
+        }
+
+        if self.t == 0 {
+            self.b[..nb].fill(0);
+            self.i[..nb].copy_from_slice(&i_t[..nb]);
+        } else if new_mask {
+            let drow = &mut self.d[d_t_i];
+            for i in 0..nb {
+                let mt = (i_t[i] ^ self.i[i]) | self.b[i];
+                drow[i] = mt ^ self.m[i];
+                self.m[i] = mt;
+                self.b[i] = 0;
+                self.i[i] = i_t[i];
+            }
+            self.d_zero[d_t_i] = self.d[d_t_i][..nb].iter().fold(0, |a, &b| a | b) == 0;
+        } else {
+            let mut dor: Block = 0;
+            {
+                let drow = &mut self.d[d_t_i];
+                for i in 0..nb {
+                    let dd = (i_t[i] ^ self.i[i]) & !self.m[i];
+                    drow[i] = dd;
+                    dor |= dd;
+                }
+            }
+            self.d_zero[d_t_i] = dor == 0;
+            for i in 0..nb {
+                let x = i_t[i] ^ self.i[i];
+                self.m[i] |= x;
+                self.b[i] |= x;
+            }
+            self.i[..nb].copy_from_slice(&i_t[..nb]);
+        }
+        d_t_i
     }
 
     pub fn set_initial_mask(&mut self, mask: &[Block]) -> Result<(), CompressError> {
@@ -135,54 +214,12 @@ impl CompressorContext {
         if !self.padding_ok(i_t) {
             return Err(CompressError::PaddingNotZero);
         }
-        self.t += 1;
-        let p_i = (self.t as usize) & (self.p.len() - 1);
-        self.p[p_i] = new_mask;
-
+        let d_t_i = self.advance(i_t, new_mask);
         let nb = self.num_blocks;
-        let d_t_i = (self.t as usize) & (self.d.len() - 1);
-
-        if self.t >= self.d.len() as isize {
-            if self.d_zero[d_t_i] {
-                self.num_d_zeros = self.num_d_zeros.saturating_add(1);
-            } else {
-                self.num_d_zeros = 0;
-            }
-        }
-
-        if self.t == 0 {
-            self.b[..nb].fill(0);
-            self.i[..nb].copy_from_slice(&i_t[..nb]);
-        } else if new_mask {
-            let drow = &mut self.d[d_t_i];
-            for i in 0..nb {
-                let mt = (i_t[i] ^ self.i[i]) | self.b[i];
-                drow[i] = mt ^ self.m[i];
-                self.m[i] = mt;
-                self.b[i] = 0;
-                self.i[i] = i_t[i];
-            }
-            self.d_zero[d_t_i] = self.d[d_t_i][..nb].iter().fold(0, |a, &b| a | b) == 0;
-        } else {
-            let mut dor: Block = 0;
-            {
-                let drow = &mut self.d[d_t_i];
-                for i in 0..nb {
-                    let dd = (i_t[i] ^ self.i[i]) & !self.m[i];
-                    drow[i] = dd;
-                    dor |= dd;
-                }
-            }
-            self.d_zero[d_t_i] = dor == 0;
-            for i in 0..nb {
-                let x = i_t[i] ^ self.i[i];
-                self.m[i] |= x;
-                self.b[i] |= x;
-            }
-            self.i[..nb].copy_from_slice(&i_t[..nb]);
-        }
 
         trace!(
+            self.trace.raw = false;
+            self.trace.ramp_k = None;
             self.trace.t = self.t;
             self.trace.new_mask = new_mask;
             self.trace.send_mask = send_mask;
@@ -204,6 +241,9 @@ impl CompressorContext {
         let mut scrolled_out = false;
         while big_c_t < cap {
             let t_prime = t - robustness as usize - 1 - big_c_t;
+            if t_prime as isize <= self.c_floor {
+                break;
+            }
             if t_prime + self.d.len() <= t {
                 scrolled_out = true;
                 break;
@@ -224,9 +264,20 @@ impl CompressorContext {
         if self.t - robustness <= 0 {
             v_t = robustness;
         }
+        let mut _ramp_k = None;
+        if let Some(k) = self.ramp {
+            if k as isize <= robustness {
+                v_t = k as isize;
+                self.ramp = Some(k + 1);
+                _ramp_k = Some(k);
+            } else {
+                self.ramp = None;
+            }
+        }
         trace!(
             self.trace.v_t = v_t;
             self.trace.big_c_t = big_c_t;
+            self.trace.ramp_k = _ramp_k;
         );
 
         // 5.3.3.1 x_t
@@ -358,12 +409,7 @@ impl CompressorContext {
             be(&i_t[..nb], &self.m[..nb], &mut w);
         } else if uncompressed {
             w.add_bits(1, 1);
-            let f = if self.last_block_bits == 0 {
-                nb * BLOCK_BITS
-            } else {
-                (nb - 1) * BLOCK_BITS + self.last_block_bits as usize
-            };
-            count(f as u16, &mut w);
+            count(self.f(), &mut w);
             for i_t_i in 0..nb {
                 if self.last_block_bits != 0 && i_t_i == nb - 1 {
                     let bits = self.last_block_bits;
@@ -389,16 +435,56 @@ impl CompressorContext {
         );
         Ok((w.pos, w.idx))
     }
+
+    pub fn skip(&mut self, i_t: &[Block], mode: Case2) -> Result<(), CompressError> {
+        if self.num_blocks == 0 {
+            return Err(CompressError::FieldWidthZero);
+        }
+        if !self.padding_ok(i_t) {
+            return Err(CompressError::PaddingNotZero);
+        }
+        let _d_t_i = self.advance(i_t, false);
+        trace!(
+            let nb = self.num_blocks;
+            self.trace.t = self.t;
+            self.trace.raw = true;
+            self.trace.ramp_k = None;
+            self.trace.new_mask = false;
+            self.trace.send_mask = false;
+            self.trace.uncompressed = false;
+            if self.t == 0 {
+                self.trace.d_t[..nb].fill(0);
+            } else {
+                self.trace.d_t[..nb].copy_from_slice(&self.d[_d_t_i][..nb]);
+            }
+            self.trace.m_t[..nb].copy_from_slice(&self.m[..nb]);
+            self.trace.b_t[..nb].copy_from_slice(&self.b[..nb]);
+            self.trace.x_t[..nb].fill(0);
+            self.trace.v_t = 0;
+            self.trace.big_c_t = 0;
+            self.trace.e_t = None;
+            self.trace.c_t = None;
+            self.trace.dot_d_t = false;
+            self.trace.segments = Segments::new();
+            self.trace.len_bits = 0;
+        );
+        if mode == Case2::Literal {
+            for row in self.d.iter_mut() {
+                row.fill(0);
+            }
+            self.d_zero = [true; 8];
+            self.ramp = Some(0);
+            self.num_d_zeros = 0;
+            self.c_floor = self.t;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(feature = "trace")]
 impl CompressorContext {
     pub fn last_trace(&self) -> &CompressTrace {
         &self.trace
-    }
-
-    pub fn t(&self) -> isize {
-        self.t
     }
 
     pub fn state_i(&self) -> &[Block] {
@@ -412,11 +498,20 @@ impl CompressorContext {
     pub fn state_b(&self) -> &[Block] {
         &self.b[..self.num_blocks]
     }
+
+    /// D of the step `back` steps before the current t; `None` before t = 1 or past the ring.
+    pub fn state_d(&self, back: usize) -> Option<&[Block]> {
+        let t = self.t - back as isize;
+        if back >= self.d.len() || t < 1 {
+            return None;
+        }
+        Some(&self.d[(t as usize) & (self.d.len() - 1)][..self.num_blocks])
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CompressError, CompressScratch, CompressorContext};
+    use super::{Case2, CompressError, CompressScratch, CompressorContext};
     use crate::{Block, BUF_LEN, BLOCK_BITS};
 
     fn encode(enc: &mut CompressorContext, field: &[Block], r: isize, f: bool, rt: bool) -> Result<(usize, u8), CompressError> {
@@ -426,6 +521,14 @@ mod tests {
     }
 
     const ZERO: [Block; BUF_LEN] = [0; BUF_LEN];
+
+    #[test]
+    fn f_returns_the_field_width_given_to_init() {
+        let b = BLOCK_BITS as u16;
+        for f in [0, 1, b - 1, b, b + 1, 3 * b + 5, u16::MAX] {
+            assert_eq!(CompressorContext::init(f).f(), f);
+        }
+    }
 
     #[test]
     fn accepts_robustness_0_to_7() {
@@ -494,5 +597,160 @@ mod tests {
         let mut mask = ZERO;
         mask[0] = 1;
         assert_eq!(CompressorContext::init(BLOCK_BITS as u16 - 4).set_initial_mask(&mask), Err(CompressError::PaddingNotZero));
+    }
+
+    fn field8(v: u8) -> [Block; BUF_LEN] {
+        let mut f = ZERO;
+        f[0] = (v as Block) << (BLOCK_BITS - 8);
+        f
+    }
+
+    #[test]
+    fn keep_d_skip_advances_like_a_compressed_step() {
+        let mut a = CompressorContext::init(8);
+        let mut b = CompressorContext::init(8);
+        for ctx in [&mut a, &mut b] {
+            encode(ctx, &field8(0x00), 0, true, true).unwrap();
+        }
+        encode(&mut a, &field8(0x30), 0, false, false).unwrap();
+        b.skip(&field8(0x30), Case2::KeepD).unwrap();
+        assert_eq!(a.t, b.t);
+        assert_eq!(a.i, b.i);
+        assert_eq!(a.m, b.m);
+        assert_eq!(a.b, b.b);
+        assert_eq!(a.d, b.d);
+        assert_eq!(a.d_zero, b.d_zero);
+        assert_eq!(a.num_d_zeros, b.num_d_zeros);
+        assert_eq!(a.p, b.p);
+    }
+
+    #[test]
+    fn skip_checks_its_input() {
+        let mut field = ZERO;
+        field[0] = 1;
+        assert_eq!(
+            CompressorContext::init(BLOCK_BITS as u16 - 4).skip(&field, Case2::KeepD),
+            Err(CompressError::PaddingNotZero)
+        );
+        assert_eq!(CompressorContext::init(0).skip(&ZERO, Case2::KeepD), Err(CompressError::FieldWidthZero));
+    }
+
+    #[test]
+    fn t_counts_codec_steps_without_trace() {
+        let mut enc = CompressorContext::init(8);
+        assert_eq!(enc.t(), -1);
+        encode(&mut enc, &field8(0x00), 0, true, true).unwrap();
+        enc.skip(&field8(0x01), Case2::KeepD).unwrap();
+        assert_eq!(enc.t(), 1);
+    }
+
+    #[test]
+    fn literal_skip_zeroes_the_d_history_and_starts_the_ramp() {
+        let mut enc = CompressorContext::init(8);
+        encode(&mut enc, &field8(0x00), 1, true, true).unwrap();
+        encode(&mut enc, &field8(0x00), 1, true, true).unwrap();
+        encode(&mut enc, &field8(0x80), 1, false, false).unwrap();
+        enc.skip(&field8(0xC0), Case2::Literal).unwrap();
+        assert!(enc.d.iter().all(|row| row.iter().all(|&w| w == 0)));
+        assert_eq!(enc.d_zero, [true; 8]);
+        assert_eq!(enc.num_d_zeros, 0);
+        assert_eq!(enc.c_floor, 3);
+        assert_eq!(enc.ramp, Some(0));
+        assert_eq!(enc.m[0], field8(0xC0)[0]);
+    }
+
+    #[test]
+    fn a_second_raw_packet_restarts_the_ramp() {
+        let mut enc = CompressorContext::init(8);
+        for _ in 0..3 {
+            encode(&mut enc, &field8(0x00), 2, true, true).unwrap();
+        }
+        enc.skip(&field8(0x01), Case2::Literal).unwrap();
+        encode(&mut enc, &field8(0x01), 2, false, false).unwrap();
+        assert_eq!(enc.ramp, Some(1));
+        enc.skip(&field8(0x01), Case2::Literal).unwrap();
+        assert_eq!(enc.ramp, Some(0));
+    }
+
+    #[cfg(feature = "trace")]
+    fn after_raw(mode: Case2) -> [(isize, Block, Option<u8>); 3] {
+        let mut enc = CompressorContext::init(8);
+        for _ in 0..3 {
+            encode(&mut enc, &field8(0x00), 2, true, true).unwrap();
+        }
+        encode(&mut enc, &field8(0x80), 2, false, false).unwrap();
+        enc.skip(&field8(0xC0), mode).unwrap();
+        let mut out = [(0, 0, None); 3];
+        for slot in out.iter_mut() {
+            encode(&mut enc, &field8(0xC0), 2, false, false).unwrap();
+            let tr = enc.last_trace();
+            *slot = (tr.v_t, tr.x_t[0], tr.ramp_k);
+        }
+        out
+    }
+
+    #[cfg(feature = "trace")]
+    #[test]
+    fn literal_ramps_v_after_a_raw_packet() {
+        assert_eq!(after_raw(Case2::Literal), [(0, 0, Some(0)), (1, 0, Some(1)), (2, 0, Some(2))]);
+    }
+
+    #[cfg(feature = "trace")]
+    #[test]
+    fn keep_d_carries_the_raw_change_in_x() {
+        assert_eq!(
+            after_raw(Case2::KeepD),
+            [(5, field8(0xC0)[0], None), (2, field8(0x40)[0], None), (2, 0, None)]
+        );
+    }
+
+    #[cfg(feature = "trace")]
+    #[test]
+    fn a_raw_packet_in_the_init_phase_ramps_v() {
+        let mut enc = CompressorContext::init(8);
+        encode(&mut enc, &field8(0x00), 2, true, true).unwrap();
+        enc.skip(&field8(0x01), Case2::Literal).unwrap();
+        encode(&mut enc, &field8(0x01), 2, true, true).unwrap();
+        assert_eq!(enc.last_trace().v_t, 0);
+        assert_eq!(enc.last_trace().ramp_k, Some(0));
+    }
+
+    #[cfg(feature = "trace")]
+    #[test]
+    fn state_d_reads_the_stored_d_rows() {
+        let mut enc = CompressorContext::init(8);
+        encode(&mut enc, &field8(0x00), 0, true, true).unwrap();
+        assert!(enc.state_d(0).is_none());
+        encode(&mut enc, &field8(0x80), 0, false, false).unwrap();
+        encode(&mut enc, &field8(0xC0), 0, false, false).unwrap();
+        assert_eq!(enc.state_d(0).unwrap()[0], field8(0x40)[0]);
+        assert_eq!(enc.state_d(1).unwrap()[0], field8(0x80)[0]);
+        assert!(enc.state_d(2).is_none());
+        assert!(enc.state_d(8).is_none());
+    }
+
+    #[cfg(feature = "trace")]
+    fn v_after_raw(mode: Case2, steps: usize) -> [isize; 20] {
+        let mut enc = CompressorContext::init(8);
+        encode(&mut enc, &field8(0x00), 1, true, true).unwrap();
+        encode(&mut enc, &field8(0x00), 1, true, true).unwrap();
+        encode(&mut enc, &field8(0x00), 1, false, false).unwrap();
+        enc.skip(&field8(0x01), mode).unwrap();
+        let mut v = [0; 20];
+        for slot in v.iter_mut().take(steps) {
+            encode(&mut enc, &field8(0x01), 1, false, false).unwrap();
+            *slot = enc.last_trace().v_t;
+        }
+        v
+    }
+
+    #[cfg(feature = "trace")]
+    #[test]
+    fn literal_counts_only_rows_after_the_raw_packet() {
+        let v = v_after_raw(Case2::Literal, 17);
+        assert_eq!(v[..4], [0, 1, 2, 3]);
+        assert_eq!(v[9], 9, "t = 13: six rows in the ring plus two that left it, all after t0");
+        assert_eq!(v[15], 15);
+        assert_eq!(v[16], 15);
     }
 }

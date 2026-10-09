@@ -20,7 +20,7 @@ pub mod rle;
 #[cfg(feature = "trace")]
 pub mod trace;
 
-pub use compressor::{CompressError, CompressScratch, CompressorContext};
+pub use compressor::{Case2, CompressError, CompressScratch, CompressorContext};
 pub use decompressor::{
     DecompressScratch, DecompressStatus, DecompressorContext, FrameError,
     MAX_COMPRESSED_PACKET_BITS, check_frame,
