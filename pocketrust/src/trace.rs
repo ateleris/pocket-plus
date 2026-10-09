@@ -82,6 +82,9 @@ pub struct CompressTrace {
     pub new_mask: bool,
     pub send_mask: bool,
     pub uncompressed: bool,
+    pub raw: bool,
+    /// V_t set by the case 2 ramp, if any.
+    pub ramp_k: Option<u8>,
     pub d_t: [Block; BUF_LEN],
     pub m_t: [Block; BUF_LEN],
     pub b_t: [Block; BUF_LEN],
@@ -102,6 +105,8 @@ impl CompressTrace {
             new_mask: false,
             send_mask: false,
             uncompressed: false,
+            raw: false,
+            ramp_k: None,
             d_t: [0; BUF_LEN],
             m_t: [0; BUF_LEN],
             b_t: [0; BUF_LEN],
@@ -121,6 +126,8 @@ impl CompressTrace {
 pub struct DecompressTrace {
     /// F the packet was parsed with, also when discovery rolled it back.
     pub f: Option<u16>,
+    /// The packet was a raw chapter 6 case 2 packet.
+    pub raw: bool,
     pub x_t: [Block; BUF_LEN],
     pub has_x_t: bool,
     pub m_staged: [Block; BUF_LEN],
@@ -161,6 +168,7 @@ impl DecompressTrace {
     pub(crate) const fn new() -> Self {
         DecompressTrace {
             f: None,
+            raw: false,
             x_t: [0; BUF_LEN],
             has_x_t: false,
             m_staged: [0; BUF_LEN],
@@ -201,6 +209,7 @@ impl DecompressTrace {
         self.m_full.fill(0);
         self.m_committed.fill(0);
         self.f = None;
+        self.raw = false;
         self.has_x_t = false;
         self.has_m_staged = false;
         self.has_m_chg = false;
