@@ -176,6 +176,30 @@ impl DecompressorContext {
         }
     }
 
+    /// Chapter 6 case 2: `Some(restart point)`, or `None` while F is unknown.
+    pub fn apply_raw(&mut self, i_t: &[Block]) -> Option<bool> {
+        trace!(self.trace.reset(););
+        if !self.f_known {
+            return None;
+        }
+        let n = self.num_blocks;
+        let src = i_t.get(..n)?;
+        for (k, &word) in src.iter().enumerate() {
+            self.m[k] |= word ^ self.i[k];
+            self.i[k] = word;
+        }
+        let last = (self.ring_index + MAX_VT_HISTORY - 1) & (MAX_VT_HISTORY - 1);
+        let restart = self.ring_count > 0 && self.ring[last] == STATUS_DECODED;
+        let status = if restart { STATUS_DECODED } else { STATUS_DECODED_MASK_UNSYNCED };
+        self.push_status(status);
+        trace!(
+            self.trace.f = Some(self.f() as u16);
+            self.trace.raw = true;
+            self.trace_commit(status);
+        );
+        Some(restart)
+    }
+
     fn decompress_internal(
         &mut self,
         input: &[Block],
@@ -671,5 +695,70 @@ mod frame_tests {
                 available: 96
             })
         );
+    }
+}
+
+#[cfg(test)]
+mod raw_tests {
+    use super::{
+        DecompressScratch, DecompressStatus, DecompressorContext, MAX_VT_HISTORY, STATUS_DECODED,
+        STATUS_DECODED_MASK_UNSYNCED,
+    };
+    use crate::{BLOCK_BITS, BUF_LEN, Block, CompressScratch, CompressorContext};
+
+    fn field8(v: u8) -> [Block; BUF_LEN] {
+        let mut f = [0; BUF_LEN];
+        f[0] = (v as Block) << (BLOCK_BITS - 8);
+        f
+    }
+
+    fn last_status(d: &DecompressorContext) -> u8 {
+        d.ring[(d.ring_index + MAX_VT_HISTORY - 1) & (MAX_VT_HISTORY - 1)]
+    }
+
+    fn decoded_first_packet() -> DecompressorContext {
+        let mut enc = CompressorContext::init(8);
+        let mut out = [0 as Block; 2 * BUF_LEN];
+        let (pos, idx) = enc
+            .compress(&field8(0x00), 0, false, true, true, &mut out, 0, 0, &mut CompressScratch::new())
+            .unwrap();
+        let mut dec = DecompressorContext::init_f_known(8);
+        let mut i_out = [0 as Block; BUF_LEN];
+        let (st, _, _) =
+            dec.decompress(&out, 0, 0, pos * BLOCK_BITS + idx as usize, &mut i_out, &mut DecompressScratch::new());
+        assert_eq!(st, DecompressStatus::Guaranteed);
+        dec
+    }
+
+    #[test]
+    fn a_raw_packet_after_a_decoded_one_is_a_restart_point() {
+        let mut dec = decoded_first_packet();
+        assert_eq!(dec.apply_raw(&field8(0x30)), Some(true));
+        assert_eq!(dec.i[0], field8(0x30)[0]);
+        assert_eq!(dec.m[0], field8(0x30)[0]);
+        assert_eq!(last_status(&dec), STATUS_DECODED);
+    }
+
+    #[test]
+    fn a_raw_packet_after_a_loss_restores_i_but_not_the_mask() {
+        let mut dec = decoded_first_packet();
+        dec.notify_packet_loss(1);
+        assert_eq!(dec.apply_raw(&field8(0x30)), Some(false));
+        assert_eq!(dec.i[0], field8(0x30)[0]);
+        assert_eq!(last_status(&dec), STATUS_DECODED_MASK_UNSYNCED);
+    }
+
+    #[test]
+    fn a_raw_packet_before_f_is_known_changes_nothing() {
+        let mut dec = DecompressorContext::init();
+        assert_eq!(dec.apply_raw(&field8(0x30)), None);
+        assert_eq!(dec.ring_count, 0);
+    }
+
+    #[test]
+    fn a_short_input_changes_nothing() {
+        let mut dec = DecompressorContext::init_f_known(8);
+        assert_eq!(dec.apply_raw(&[]), None);
+        assert_eq!(dec.ring_count, 0);
     }
 }
