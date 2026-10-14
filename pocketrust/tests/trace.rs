@@ -1,8 +1,8 @@
 #![cfg(feature = "trace")]
 
 use pocketrust::{
-    blocks_for, Block, CompressScratch, CompressorContext, DecompressScratch, DecompressStatus,
-    DecompressorContext, Seg, BLOCK_BITS, BUF_LEN, SEGS,
+    BLOCK_BITS, BUF_LEN, Block, CompressScratch, CompressorContext, DecompressScratch,
+    DecompressStatus, DecompressorContext, SEGS, Seg, blocks_for,
 };
 
 fn next(seed: &mut u64) -> u64 {
@@ -61,16 +61,37 @@ fn schedule(t: usize, r: isize) -> Flags {
 }
 
 /// Compresses one packet into a fresh buffer at bit `at`; returns the buffer and the packet length.
-fn compress_at(enc: &mut CompressorContext, i_t: &[Block; BUF_LEN], fl: &Flags, f: u16, at: usize) -> (Vec<Block>, usize) {
+fn compress_at(
+    enc: &mut CompressorContext,
+    i_t: &[Block; BUF_LEN],
+    fl: &Flags,
+    f: u16,
+    at: usize,
+) -> (Vec<Block>, usize) {
     let mut out = vec![0 as Block; blocks_for(f as usize) * 12 + 8 + at / BLOCK_BITS];
     let mut scratch = CompressScratch::new();
     let (pos, idx) = enc
-        .compress(i_t, fl.r, fl.new_mask, fl.send_mask, fl.uncompressed, &mut out, at / BLOCK_BITS, (at % BLOCK_BITS) as u8, &mut scratch)
+        .compress(
+            i_t,
+            fl.r,
+            fl.new_mask,
+            fl.send_mask,
+            fl.uncompressed,
+            &mut out,
+            at / BLOCK_BITS,
+            (at % BLOCK_BITS) as u8,
+            &mut scratch,
+        )
         .expect("valid input");
     (out, pos * BLOCK_BITS + idx as usize - at)
 }
 
-fn compress(enc: &mut CompressorContext, i_t: &[Block; BUF_LEN], fl: &Flags, f: u16) -> (Vec<Block>, usize) {
+fn compress(
+    enc: &mut CompressorContext,
+    i_t: &[Block; BUF_LEN],
+    fl: &Flags,
+    f: u16,
+) -> (Vec<Block>, usize) {
     compress_at(enc, i_t, fl, f, 0)
 }
 
@@ -81,16 +102,43 @@ fn d_t_is_the_change_outside_the_previous_mask() {
     let mut seed = 0x9e37_79b9_7f4a_7c15;
     let mut enc = CompressorContext::init(f);
     let mut prev = random_field(&mut seed, f);
-    compress(&mut enc, &prev, &Flags { r: 1, new_mask: false, send_mask: true, uncompressed: true }, f);
-    assert!(enc.last_trace().d_t[..n].iter().all(|&w| w == 0), "no D_t at t = 0");
+    compress(
+        &mut enc,
+        &prev,
+        &Flags {
+            r: 1,
+            new_mask: false,
+            send_mask: true,
+            uncompressed: true,
+        },
+        f,
+    );
+    assert!(
+        enc.last_trace().d_t[..n].iter().all(|&w| w == 0),
+        "no D_t at t = 0"
+    );
     for t in 1..30 {
         let cur = mutate(&mut seed, &prev, f);
         let m_before = enc.state_m().to_vec();
         let forced = t <= 1;
-        compress(&mut enc, &cur, &Flags { r: 1, new_mask: false, send_mask: forced, uncompressed: forced }, f);
+        compress(
+            &mut enc,
+            &cur,
+            &Flags {
+                r: 1,
+                new_mask: false,
+                send_mask: forced,
+                uncompressed: forced,
+            },
+            f,
+        );
         let tr = enc.last_trace();
         for i in 0..n {
-            assert_eq!(tr.d_t[i], (cur[i] ^ prev[i]) & !m_before[i], "t={t} word {i}");
+            assert_eq!(
+                tr.d_t[i],
+                (cur[i] ^ prev[i]) & !m_before[i],
+                "t={t} word {i}"
+            );
         }
         assert_eq!(&tr.m_t[..n], enc.state_m(), "t={t}");
         assert_eq!(tr.t, t as isize);
@@ -146,7 +194,15 @@ fn state_getters_show_the_last_packet() {
 fn decode(dec: &mut DecompressorContext, buf: &[Block], at: usize, len: usize) -> DecompressStatus {
     let mut out = [0 as Block; BUF_LEN];
     let mut scratch = DecompressScratch::new();
-    dec.decompress(buf, at / BLOCK_BITS, (at % BLOCK_BITS) as u8, at + len, &mut out, &mut scratch).0
+    dec.decompress(
+        buf,
+        at / BLOCK_BITS,
+        (at % BLOCK_BITS) as u8,
+        at + len,
+        &mut out,
+        &mut scratch,
+    )
+    .0
 }
 
 #[test]
@@ -189,7 +245,10 @@ fn offsets_are_relative_to_the_packet_start() {
     let mut dec = DecompressorContext::init_f_known(f);
     let cur = random_field(&mut seed, f);
     let (buf, len) = compress_at(&mut enc, &cur, &schedule(0, 0), f, 77);
-    assert_eq!(decode(&mut dec, &buf, 77, len), DecompressStatus::Guaranteed);
+    assert_eq!(
+        decode(&mut dec, &buf, 77, len),
+        DecompressStatus::Guaranteed
+    );
     assert_eq!(dec.last_trace().segments, enc.last_trace().segments);
     assert_eq!(enc.last_trace().segments.get(Seg::RleX).start, 0);
 }
@@ -201,13 +260,36 @@ fn a_truncated_packet_reports_where_parsing_stopped() {
     let mut enc = CompressorContext::init(f);
     let mut dec = DecompressorContext::init_f_known(f);
     let first = random_field(&mut seed, f);
-    let (buf, len) = compress(&mut enc, &first, &Flags { r: 0, new_mask: false, send_mask: true, uncompressed: true }, f);
+    let (buf, len) = compress(
+        &mut enc,
+        &first,
+        &Flags {
+            r: 0,
+            new_mask: false,
+            send_mask: true,
+            uncompressed: true,
+        },
+        f,
+    );
     assert_eq!(decode(&mut dec, &buf, 0, len), DecompressStatus::Guaranteed);
     let second = mutate(&mut seed, &first, f);
-    let (buf, _) = compress(&mut enc, &second, &Flags { r: 0, new_mask: false, send_mask: false, uncompressed: false }, f);
+    let (buf, _) = compress(
+        &mut enc,
+        &second,
+        &Flags {
+            r: 0,
+            new_mask: false,
+            send_mask: false,
+            uncompressed: false,
+        },
+        f,
+    );
     let ut = enc.last_trace().segments.get(Seg::Ut);
     assert!(ut.len > 1, "the packet must carry unpredictable bits");
-    assert_eq!(decode(&mut dec, &buf, 0, ut.start + 1), DecompressStatus::Unguaranteed);
+    assert_eq!(
+        decode(&mut dec, &buf, 0, ut.start + 1),
+        DecompressStatus::Unguaranteed
+    );
     let dt = dec.last_trace();
     assert_eq!(dt.failed_at, Some((Seg::Ut, ut.start)));
     assert_eq!(dt.status, 1);
@@ -236,9 +318,22 @@ fn an_undiscoverable_packet_is_flagged() {
     let first = random_field(&mut seed, f);
     compress(&mut enc, &first, &schedule(0, 0), f);
     let second = mutate(&mut seed, &first, f);
-    let (buf, len) = compress(&mut enc, &second, &Flags { r: 0, new_mask: false, send_mask: false, uncompressed: false }, f);
+    let (buf, len) = compress(
+        &mut enc,
+        &second,
+        &Flags {
+            r: 0,
+            new_mask: false,
+            send_mask: false,
+            uncompressed: false,
+        },
+        f,
+    );
     let mut dec = DecompressorContext::init();
-    assert_eq!(decode(&mut dec, &buf, 0, len), DecompressStatus::Unguaranteed);
+    assert_eq!(
+        decode(&mut dec, &buf, 0, len),
+        DecompressStatus::Unguaranteed
+    );
     assert!(dec.last_trace().f_unknown);
     assert_eq!(dec.last_trace().status, 1);
 }
@@ -253,7 +348,17 @@ fn rt_packet_after_history(seed: u64) -> (Vec<Block>, usize, CompressorContext) 
     for t in 0..6 {
         let forced = t <= 1;
         let rt = forced || t == 5;
-        last = compress(&mut enc, &cur, &Flags { r: 1, new_mask: t == 3 || t == 4, send_mask: rt, uncompressed: rt }, f);
+        last = compress(
+            &mut enc,
+            &cur,
+            &Flags {
+                r: 1,
+                new_mask: t == 3 || t == 4,
+                send_mask: rt,
+                uncompressed: rt,
+            },
+            f,
+        );
         cur = mutate(&mut seed, &cur, f);
     }
     (last.0, last.1, enc)
@@ -268,8 +373,15 @@ fn a_weak_discovery_reports_where_parsing_stopped() {
     let (buf, len) = compress(&mut enc, &cur, &schedule(0, 1), f);
     let ut = enc.last_trace().segments.get(Seg::Ut);
     let mut dec = DecompressorContext::init();
-    assert_eq!(decode(&mut dec, &buf, 0, len - 10), DecompressStatus::Unguaranteed);
-    assert_eq!(dec.discovered_f(), Some(f), "a weak discovery still locks F");
+    assert_eq!(
+        decode(&mut dec, &buf, 0, len - 10),
+        DecompressStatus::Unguaranteed
+    );
+    assert_eq!(
+        dec.discovered_f(),
+        Some(f),
+        "a weak discovery still locks F"
+    );
     let dt = dec.last_trace();
     assert!(dt.weak_discovery);
     assert!(!dt.f_rejected);
@@ -285,7 +397,10 @@ fn a_rejected_weak_discovery_does_not_claim_f() {
     assert!(kt.len > 0, "the packet must carry k_t");
     buf[kt.start / BLOCK_BITS] ^= (1 as Block) << (BLOCK_BITS - 1 - kt.start % BLOCK_BITS);
     let mut dec = DecompressorContext::init();
-    assert_eq!(decode(&mut dec, &buf, 0, len - 10), DecompressStatus::Unguaranteed);
+    assert_eq!(
+        decode(&mut dec, &buf, 0, len - 10),
+        DecompressStatus::Unguaranteed
+    );
     assert_eq!(dec.discovered_f(), None);
     let dt = dec.last_trace();
     assert!(dt.f_rejected);
@@ -301,7 +416,10 @@ fn a_failed_strict_discovery_shows_the_rolled_back_ring() {
     assert!(kt.len > 0, "the packet must carry k_t");
     buf[kt.start / BLOCK_BITS] ^= (1 as Block) << (BLOCK_BITS - 1 - kt.start % BLOCK_BITS);
     let mut dec = DecompressorContext::init();
-    assert_eq!(decode(&mut dec, &buf, 0, len), DecompressStatus::Unguaranteed);
+    assert_eq!(
+        decode(&mut dec, &buf, 0, len),
+        DecompressStatus::Unguaranteed
+    );
     assert_eq!(dec.discovered_f(), None);
     let dt = dec.last_trace();
     assert!(dt.mask_inc_changed);
@@ -314,11 +432,41 @@ fn the_compressor_trace_records_the_flags() {
     let f = 64u16;
     let mut enc = CompressorContext::init(f);
     let v = [0 as Block; BUF_LEN];
-    compress(&mut enc, &v, &Flags { r: 1, new_mask: false, send_mask: true, uncompressed: true }, f);
+    compress(
+        &mut enc,
+        &v,
+        &Flags {
+            r: 1,
+            new_mask: false,
+            send_mask: true,
+            uncompressed: true,
+        },
+        f,
+    );
     let tr = enc.last_trace();
     assert!(tr.send_mask && tr.uncompressed && !tr.new_mask);
-    compress(&mut enc, &v, &Flags { r: 1, new_mask: false, send_mask: true, uncompressed: true }, f);
-    compress(&mut enc, &v, &Flags { r: 1, new_mask: true, send_mask: false, uncompressed: false }, f);
+    compress(
+        &mut enc,
+        &v,
+        &Flags {
+            r: 1,
+            new_mask: false,
+            send_mask: true,
+            uncompressed: true,
+        },
+        f,
+    );
+    compress(
+        &mut enc,
+        &v,
+        &Flags {
+            r: 1,
+            new_mask: true,
+            send_mask: false,
+            uncompressed: false,
+        },
+        f,
+    );
     let tr = enc.last_trace();
     assert!(tr.new_mask && !tr.send_mask && !tr.uncompressed);
 }
@@ -334,17 +482,29 @@ fn a_failure_in_any_segment_closes_the_remaining_ones() {
             continue;
         }
         let mut dec = DecompressorContext::init_f_known(f);
-        assert_eq!(decode(&mut dec, &buf, 0, sp.start), DecompressStatus::Unguaranteed, "{s:?}");
+        assert_eq!(
+            decode(&mut dec, &buf, 0, sp.start),
+            DecompressStatus::Unguaranteed,
+            "{s:?}"
+        );
         let dt = dec.last_trace();
         assert_eq!(dt.failed_at, Some((*s, sp.start)), "{s:?}");
         assert_eq!(dt.f, Some(f), "{s:?}");
         for later in &SEGS[k..] {
-            assert_eq!(dt.segments.get(*later).start, sp.start, "{s:?} then {later:?}");
+            assert_eq!(
+                dt.segments.get(*later).start,
+                sp.start,
+                "{s:?} then {later:?}"
+            );
             assert_eq!(dt.segments.get(*later).len, 0, "{s:?} then {later:?}");
         }
         assert_eq!(dt.has_x_t, k > 0, "{s:?}");
         assert_eq!(dt.has_m_staged, *s == Seg::Ut, "{s:?}");
-        assert_eq!(dt.has_m_chg, k > SEGS.iter().position(|x| *x == Seg::Kt).unwrap(), "{s:?}");
+        assert_eq!(
+            dt.has_m_chg,
+            k > SEGS.iter().position(|x| *x == Seg::Kt).unwrap(),
+            "{s:?}"
+        );
     }
 }
 

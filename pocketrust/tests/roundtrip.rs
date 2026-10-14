@@ -2,8 +2,8 @@
 //! (send_mask + uncompressed for the first R+1 packets, then incremental).
 
 use pocketrust::{
-    CompressorContext, DecompressScratch, DecompressStatus, DecompressorContext, CompressScratch,
-    blocks_for, Block, BLOCK_BITS, BLOCK_MASK, BLOCK_SHIFT, BUF_LEN,
+    BLOCK_BITS, BLOCK_MASK, BLOCK_SHIFT, BUF_LEN, Block, CompressScratch, CompressorContext,
+    DecompressScratch, DecompressStatus, DecompressorContext, blocks_for,
 };
 
 fn num_blocks(f: u16) -> usize {
@@ -59,18 +59,19 @@ fn roundtrip(
         let forced = (t as isize) <= robustness;
         let new_mask = new_mask_at(t);
         let send_mask = forced || (new_mask && send_on_new_mask);
-        (pos, idx) = enc.compress(
-            p,
-            robustness,
-            new_mask,
-            send_mask,
-            forced,
-            &mut o,
-            pos,
-            idx,
-            &mut scratch,
-        )
-        .expect("valid input");
+        (pos, idx) = enc
+            .compress(
+                p,
+                robustness,
+                new_mask,
+                send_mask,
+                forced,
+                &mut o,
+                pos,
+                idx,
+                &mut scratch,
+            )
+            .expect("valid input");
     }
 
     let mut dec = DecompressorContext::init_f_known(f);
@@ -78,7 +79,14 @@ fn roundtrip(
     let (mut dpos, mut didx) = (0usize, 0u8);
     for (t, p) in packets.iter().enumerate() {
         let mut out: [Block; BUF_LEN] = [0; BUF_LEN];
-        let (_status, np, ni) = dec.decompress(&o, dpos, didx, o.len() * BLOCK_BITS, &mut out, &mut dscratch);
+        let (_status, np, ni) = dec.decompress(
+            &o,
+            dpos,
+            didx,
+            o.len() * BLOCK_BITS,
+            &mut out,
+            &mut dscratch,
+        );
         (dpos, didx) = (np, ni);
         assert_eq!(
             &out[..n],
@@ -103,9 +111,9 @@ fn decode_discovers_f_when_unknown() {
             let (mut pos, mut idx) = (0usize, 0u8);
             for (t, p) in packets.iter().enumerate() {
                 let forced = (t as isize) <= r;
-                (pos, idx) =
-                    enc.compress(p, r, false, forced, forced, &mut o, pos, idx, &mut escratch)
-                        .expect("valid input");
+                (pos, idx) = enc
+                    .compress(p, r, false, forced, forced, &mut o, pos, idx, &mut escratch)
+                    .expect("valid input");
             }
 
             // Decode without telling the decoder F.
@@ -119,8 +127,14 @@ fn decode_discovers_f_when_unknown() {
             let (mut dpos, mut didx) = (0usize, 0u8);
             for (t, p) in packets.iter().enumerate() {
                 let mut out: [Block; BUF_LEN] = [0; BUF_LEN];
-                let (status, np, ni) =
-                    dec.decompress(&o, dpos, didx, o.len() * BLOCK_BITS, &mut out, &mut dscratch);
+                let (status, np, ni) = dec.decompress(
+                    &o,
+                    dpos,
+                    didx,
+                    o.len() * BLOCK_BITS,
+                    &mut out,
+                    &mut dscratch,
+                );
                 (dpos, didx) = (np, ni);
                 assert_eq!(
                     status,

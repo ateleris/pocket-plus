@@ -1,6 +1,6 @@
 use crate::bitstream::{BitReader, BitWriter};
 use crate::count::{count, try_read_count};
-use crate::{Block, BLOCK_BITS, BLOCK_MASK, BLOCK_MSB, BLOCK_SHIFT};
+use crate::{BLOCK_BITS, BLOCK_MASK, BLOCK_MSB, BLOCK_SHIFT, Block};
 
 pub fn reverse_rle(in_vec: &[Block], in_vec_skip: u16, w: &mut BitWriter) {
     let mut c: u32 = 0;
@@ -65,8 +65,8 @@ pub(crate) fn try_read_reverse_rle(
 #[cfg(test)]
 mod tests {
     use super::{reverse_rle, try_read_reverse_rle};
-    use crate::{Block, BUF_LEN, BLOCK_BITS, BLOCK_MSB};
     use crate::bitstream::{BitReader, BitWriter};
+    use crate::{BLOCK_BITS, BLOCK_MSB, BUF_LEN, Block};
 
     #[test]
     fn reverse_rle_roundtrips() {
@@ -74,7 +74,10 @@ mod tests {
             [0, 0],
             [BLOCK_MSB, 0],
             [1, 0],
-            [0xDEAD_BEEF_CAFE_F00D_u64 as Block, 0xA5A5_A5A5_A5A5_0000_u64 as Block],
+            [
+                0xDEAD_BEEF_CAFE_F00D_u64 as Block,
+                0xA5A5_A5A5_A5A5_0000_u64 as Block,
+            ],
             [Block::MAX, Block::MAX],
         ];
         for c in cases {
@@ -104,7 +107,7 @@ mod tests {
                 for w in 0..words {
                     v[w] = match density {
                         0 => 0,             // long zero runs
-                        1 => Block::MAX,      // long one runs
+                        1 => Block::MAX,    // long one runs
                         2 => rng() & rng(), // sparse ones
                         3 => rng() | rng(), // dense ones
                         _ => rng(),

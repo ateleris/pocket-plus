@@ -1,5 +1,5 @@
 use crate::bitstream::{BitReader, BitWriter};
-use crate::{Block, BLOCK_BITS};
+use crate::{BLOCK_BITS, Block};
 
 pub fn be(a: &[Block], b: &[Block], w: &mut BitWriter) {
     let mut filler: Block = 0;
@@ -106,8 +106,8 @@ pub(crate) fn try_read_reverse_be_inverting(
 #[cfg(test)]
 mod tests {
     use super::{be, try_read_be};
-    use crate::{Block, BUF_LEN, BLOCK_MSB};
     use crate::bitstream::{BitReader, BitWriter};
+    use crate::{BLOCK_MSB, BUF_LEN, Block};
 
     #[test]
     fn try_read_be_inverts_be_fuzz() {
@@ -161,7 +161,10 @@ mod tests {
     #[test]
     fn try_read_be_inverts_be() {
         // Zero `prev` reduces the merge to a plain scatter: (0 & !b) | v == v.
-        let a = [0x0123_4567_89AB_CDEF_u64 as Block, 0xFEDC_BA98_7654_3210_u64 as Block];
+        let a = [
+            0x0123_4567_89AB_CDEF_u64 as Block,
+            0xFEDC_BA98_7654_3210_u64 as Block,
+        ];
         let prev: [Block; 2] = [0; 2];
         let masks: [[Block; 2]; 3] = [
             [Block::MAX, 0x0F0F_0F0F_0F0F_0F0F_u64 as Block],
