@@ -190,7 +190,11 @@ impl DecompressorContext {
         }
         let last = (self.ring_index + MAX_VT_HISTORY - 1) & (MAX_VT_HISTORY - 1);
         let restart = self.ring_count > 0 && self.ring[last] == STATUS_DECODED;
-        let status = if restart { STATUS_DECODED } else { STATUS_DECODED_MASK_UNSYNCED };
+        let status = if restart {
+            STATUS_DECODED
+        } else {
+            STATUS_DECODED_MASK_UNSYNCED
+        };
         self.push_status(status);
         trace!(
             self.trace.f = Some(self.f() as u16);
@@ -720,12 +724,28 @@ mod raw_tests {
         let mut enc = CompressorContext::init(8);
         let mut out = [0 as Block; 2 * BUF_LEN];
         let (pos, idx) = enc
-            .compress(&field8(0x00), 0, false, true, true, &mut out, 0, 0, &mut CompressScratch::new())
+            .compress(
+                &field8(0x00),
+                0,
+                false,
+                true,
+                true,
+                &mut out,
+                0,
+                0,
+                &mut CompressScratch::new(),
+            )
             .unwrap();
         let mut dec = DecompressorContext::init_f_known(8);
         let mut i_out = [0 as Block; BUF_LEN];
-        let (st, _, _) =
-            dec.decompress(&out, 0, 0, pos * BLOCK_BITS + idx as usize, &mut i_out, &mut DecompressScratch::new());
+        let (st, _, _) = dec.decompress(
+            &out,
+            0,
+            0,
+            pos * BLOCK_BITS + idx as usize,
+            &mut i_out,
+            &mut DecompressScratch::new(),
+        );
         assert_eq!(st, DecompressStatus::Guaranteed);
         dec
     }

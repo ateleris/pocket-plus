@@ -20,13 +20,13 @@ pub mod rle;
 #[cfg(feature = "trace")]
 pub mod trace;
 
-pub use compressor::{Case2, CompressError, CompressScratch, CompressorContext};
+pub use compressor::{CompressError, CompressScratch, CompressorContext};
 pub use decompressor::{
     DecompressScratch, DecompressStatus, DecompressorContext, FrameError,
     MAX_COMPRESSED_PACKET_BITS, check_frame,
 };
 #[cfg(feature = "trace")]
-pub use trace::{CompressTrace, DecompressTrace, Seg, Segments, Span, SEGS};
+pub use trace::{CompressTrace, DecompressTrace, SEGS, Seg, Segments, Span};
 
 pub const MAX_PACKET_BITS: usize = (1 << 16) - 1; // 65535
 const _: () = assert!(

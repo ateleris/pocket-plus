@@ -1,5 +1,5 @@
-use crate::bitstream::{BitReader, BitWriter};
 use crate::Block;
+use crate::bitstream::{BitReader, BitWriter};
 
 #[inline]
 pub fn count(a: u16, w: &mut BitWriter) {

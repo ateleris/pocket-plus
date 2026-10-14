@@ -1,5 +1,4 @@
-
-use crate::{Block, BLOCK_BITS, BLOCK_MASK, BLOCK_SHIFT};
+use crate::{BLOCK_BITS, BLOCK_MASK, BLOCK_SHIFT, Block};
 
 const BITS: u8 = BLOCK_BITS as u8;
 
@@ -34,14 +33,13 @@ impl<'a> BitWriter<'a> {
             let num_bits_a = BITS - self.idx;
             let num_bits_b = num_bits - num_bits_a;
             self.data[self.pos] = (self.data[self.pos] & !mask) | ((val >> num_bits_b) & mask);
-            self.data[self.pos + 1] =
-                self.data[self.pos + 1] | (val << (BITS - num_bits_b));
+            self.data[self.pos + 1] = self.data[self.pos + 1] | (val << (BITS - num_bits_b));
             self.pos += 1;
             self.idx = num_bits_b;
             return;
         }
-        self.data[self.pos] = (self.data[self.pos] & !mask)
-            | ((val << ((BITS - num_bits) - self.idx)) & mask);
+        self.data[self.pos] =
+            (self.data[self.pos] & !mask) | ((val << ((BITS - num_bits) - self.idx)) & mask);
 
         self.pos += (final_idx >> BLOCK_SHIFT) as usize;
         self.idx = final_idx & BLOCK_MASK as u8;
@@ -157,7 +155,7 @@ impl<'a> BitReader<'a> {
 #[cfg(test)]
 mod tests {
     use super::{BitReader, BitWriter};
-    use crate::{Block, BLOCK_BITS};
+    use crate::{BLOCK_BITS, Block};
 
     #[test]
     fn read_inverts_add_bits() {
