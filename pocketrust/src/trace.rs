@@ -1,6 +1,6 @@
 //! Intermediate values of the last `compress` / `decompress` call.
 use crate::decompressor::MAX_VT_HISTORY;
-use crate::{Block, BUF_LEN};
+use crate::{BUF_LEN, Block};
 
 /// Bits `start..start + len` of one compressed packet, counted from its first bit.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -22,7 +22,16 @@ pub enum Seg {
     Ut,
 }
 
-pub const SEGS: [Seg; 8] = [Seg::RleX, Seg::Vt, Seg::Et, Seg::Kt, Seg::Ct, Seg::Dt, Seg::Qt, Seg::Ut];
+pub const SEGS: [Seg; 8] = [
+    Seg::RleX,
+    Seg::Vt,
+    Seg::Et,
+    Seg::Kt,
+    Seg::Ct,
+    Seg::Dt,
+    Seg::Qt,
+    Seg::Ut,
+];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Segments([Span; 8]);
@@ -46,7 +55,11 @@ pub(crate) struct Marker {
 
 impl Marker {
     pub(crate) const fn new(at: usize) -> Self {
-        Marker { origin: at, last: at, next: 0 }
+        Marker {
+            origin: at,
+            last: at,
+            next: 0,
+        }
     }
 
     /// Ends `seg` at absolute bit `at`; segments skipped since the previous cut get length 0.
@@ -56,7 +69,10 @@ impl Marker {
             segs.0[self.next] = Span { start, len: 0 };
             self.next += 1;
         }
-        segs.0[seg as usize] = Span { start, len: at - self.last };
+        segs.0[seg as usize] = Span {
+            start,
+            len: at - self.last,
+        };
         self.last = at;
         self.next = seg as usize + 1;
     }
@@ -83,8 +99,6 @@ pub struct CompressTrace {
     pub send_mask: bool,
     pub uncompressed: bool,
     pub raw: bool,
-    /// V_t set by the case 2 ramp, if any.
-    pub ramp_k: Option<u8>,
     pub d_t: [Block; BUF_LEN],
     pub m_t: [Block; BUF_LEN],
     pub b_t: [Block; BUF_LEN],
@@ -106,7 +120,6 @@ impl CompressTrace {
             send_mask: false,
             uncompressed: false,
             raw: false,
-            ramp_k: None,
             d_t: [0; BUF_LEN],
             m_t: [0; BUF_LEN],
             b_t: [0; BUF_LEN],

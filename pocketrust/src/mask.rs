@@ -1,4 +1,4 @@
-use crate::{blocks_for, Block, BLOCK_BITS, BUF_LEN};
+use crate::{BLOCK_BITS, BUF_LEN, Block, blocks_for};
 
 /// Invert `m_t ^ (m_t << 1)`
 pub fn invert_mask_shift(shift: &[Block], f: usize) -> [Block; BUF_LEN] {
@@ -28,7 +28,9 @@ pub fn invert_mask_shift(shift: &[Block], f: usize) -> [Block; BUF_LEN] {
 #[cfg(test)]
 mod tests {
     use super::invert_mask_shift;
-    use crate::{blocks_for, Block, BLOCK_BITS, BLOCK_MASK, BLOCK_MSB, BLOCK_SHIFT, BUF_LEN, MAX_PACKET_BITS};
+    use crate::{
+        BLOCK_BITS, BLOCK_MASK, BLOCK_MSB, BLOCK_SHIFT, BUF_LEN, Block, MAX_PACKET_BITS, blocks_for,
+    };
 
     /// Bit-by-bit reference.
     fn invert_naive(shift: &[Block], f: usize) -> [Block; BUF_LEN] {
