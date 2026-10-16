@@ -211,6 +211,15 @@ object EncodingStep {
     val dvect = PocketExecSpec.updateChangeVector(params, mt)
     // ht computation
     // X_T represents all the bit positions that became "unpredictable" during the last R_t + 1 cycles, i.e., if R_t = 0 then X_t = D_t so the changes between t-1 and t, and otherwise, betwee t-R_t and t.
+    ghostExpr({
+      params.lemmaInvariant()
+      assert(params.dts.forall(dv => dv.size == params.f))
+      ListSpecs.contentSubsetPreservesForall(params.dts, params.dts.take(params.robustnessT), (dv: List[Boolean]) => dv.size == params.f)
+      assert(params.dts.take(params.robustnessT).forall(dv => dv.size == params.f))
+      assert(dvect.size == params.f)
+      ListSpecs.listAppendValidProp(List(dvect), params.dts.take(params.robustnessT), (dv: List[Boolean]) => dv.size == params.f)
+      assert((params.dts.take(params.robustnessT) ++ List(dvect)).forall(dv => dv.size == params.f))
+    })
     val xt: List[Boolean] with xt.size == params.f = or(params.f, (params.dts.take(params.robustnessT) ++ List(dvect))).reverse.asInstanceOf[{r: List[Boolean] with r.size == params.f }] // X_t = OR of the last robustnessT D_t's plus the current one; dts may hold more (up to 15) for C_t's benefit, so take only what X_t needs.
     val yt: List[Boolean] = BasicEncodingFunctions.bitExtractionFunction(not(mt).reverse, xt)
     val vt: BigInt = compVt(params)
