@@ -214,6 +214,7 @@ object EncodingStep {
     val xt: List[Boolean] with xt.size == params.f = or(params.f, (params.dts.take(params.robustnessT) ++ List(dvect))).reverse.asInstanceOf[{r: List[Boolean] with r.size == params.f }] // X_t = OR of the last robustnessT D_t's plus the current one; dts may hold more (up to 15) for C_t's benefit, so take only what X_t needs.
     val yt: List[Boolean] = BasicEncodingFunctions.bitExtractionFunction(not(mt).reverse, xt)
     val vt: BigInt = compVt(params)
+    assert(0 <= vt && vt < 16)
     val et: List[Boolean] with et.isEmpty || et.size == 1 = if vt == 0 || xt.forall(b => b == false) then List[Boolean]() else if yt.forall(b => b == false) && vt > 0 && !xt.forall(b => b == false) then List(false) else List(true)
     val kt: List[Boolean] with kt.isEmpty || kt == yt = if vt == 0 || xt.forall(b => b == false) || yt.forall(b => b == false) then List[Boolean]() else yt
     val ct: List[Boolean] with ct.isEmpty || ct.size == 1 = if kt.isEmpty then List[Boolean]() else if !kt.isEmpty && !params.ptSetMoreThanOnceInHistory(vt + 1) then List(false) else List(true)
@@ -257,11 +258,14 @@ object EncodingStep {
 
   /**
     * Bluebook section 5.3.2.2
-    * 
+    *
     *
     * @param params
     */
-  def compVt(params: PocketExecSpec.CompressionParameters): BigInt = if params.t - params.robustnessT <= 0 then params.robustnessT else params.robustnessT + params.ct
+  def compVt(params: PocketExecSpec.CompressionParameters): BigInt = {
+    ghostExpr(params.lemmaInvariant())
+    if params.t - params.robustnessT <= 0 then params.robustnessT else params.robustnessT + params.ct
+  }.ensuring(res => 0 <= res && res <= 15)
 }
 
 
