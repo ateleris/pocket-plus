@@ -121,7 +121,8 @@ object PocketExecSpec {
     require(params.f == it.size)
     val (packet, bt, mt, dvect) = EncodingStep.step(params, it)
     val tNext = params.t + 1
-    val newDts = Cons(dvect, params.dts).take(min(tNext, 15))
+    val consDts = Cons(dvect, params.dts)
+    val newDts = consDts.take(min(tNext, 15))
     assert(newDts.size <= min(tNext, 15))
     assert(newDts.size <= 15)
     val nextCt = newDts.drop(params.robustnessT).takeWhile(dv => dv.forall(b => b == false)).size
@@ -150,7 +151,10 @@ object PocketExecSpec {
       assert(it.size == params.f)
       assert(bt.size == params.f && (if tNext == 0 then bt == build0(params.f) else true))
       assert(mt.size == params.f && (if tNext == 0 then mt == params.m0 else true))
-      assert(newDts.forall(dv => dv.size == params.f) && newDts.size == min(tNext, 15)) // TODO
+      assert(dvect.size == params.f)
+      assert(consDts.forall(dv => dv.size == params.f))
+      ListSpecs.contentSubsetPreservesForall(consDts, newDts, (dv: List[Boolean]) => dv.size == params.f)
+      assert(newDts.forall(dv => dv.size == params.f) && newDts.size == min(tNext, 15))
     })
     val nextParams = CompressionParameters(
       t = tNext, f = params.f, m0 = params.m0, robustnessT = params.robustnessT,
