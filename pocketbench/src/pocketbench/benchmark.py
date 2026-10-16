@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 MIB = 1_048_576
+MIN_BUDGET_ITERATIONS = 5  # floor on timed iterations when a time budget sizes them
 
 
 @dataclass
@@ -37,6 +38,8 @@ class BuildInfo:
     build_command: str
     build_profile: str = ""  # optimization flags / release profile (self-reported)
     limitations: str = ""    # build constraints, e.g. supported packet-size range (self-reported)
+    size_specialized: bool = False
+    packet_bits: int | None = None  # the F a size-specialized build was compiled for
 
 
 @dataclass
@@ -52,6 +55,8 @@ class BenchMetrics:
     us_per_pkt: float
     packets_per_sec: float
     mb_per_sec: float
+    build_packet_bits: int | None = None  # set when timed on a size-specialized build
+    iterations: int | None = None  # timed iterations the median was taken over
 
 
 def derive(record: BenchRecord, packet_bits: int) -> BenchMetrics:

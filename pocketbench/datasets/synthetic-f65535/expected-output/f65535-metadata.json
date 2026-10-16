@@ -1,0 +1,31 @@
+{
+  "name": "f65535",
+  "generated_at": "2026-10-01T00:00:00Z",
+  "input": {
+    "file": "f65535.bin",
+    "size": 262144,
+    "md5": "785220bd1c9df2089a4e231c05d99324",
+    "type": "synthetic"
+  },
+  "compression": {
+    "packet_length": 8192,
+    "packet_bits": 65535,
+    "parameters": {
+      "pt": 4,
+      "ft": 8,
+      "rt": 16,
+      "robustness": 2
+    }
+  },
+  "output": {
+    "compressed": {
+      "file": "f65535.bin.pkt",
+      "size": 34972,
+      "md5": "83ce9be65a7ba58f7095f87da31f65d8"
+    }
+  },
+  "results": {
+    "compression_ratio": 7.5,
+    "roundtrip_verified": true
+  }
+}

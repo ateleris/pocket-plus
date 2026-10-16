@@ -29,7 +29,7 @@ def _stems(root: Path) -> list[str]:
     )
 
 
-def _dataset_for(root: Path, stem: str, name: str) -> Dataset:
+def _dataset_for(root: Path, stem: str, name: str, group: str) -> Dataset:
     """Build a Dataset for one vector, reading params from its metadata and paths by convention."""
     meta_path = root / "expected-output" / f"{stem}-metadata.json"
     if not meta_path.is_file():
@@ -59,6 +59,7 @@ def _dataset_for(root: Path, stem: str, name: str) -> Dataset:
         ft=params["ft"],
         rt=params["rt"],
         robustness=params["robustness"],
+        group=group,
     )
 
 
@@ -73,9 +74,10 @@ def load_reference(discovered: DiscoveredDataset) -> list[Dataset]:
         raise RuntimeError(f"{discovered.manifest.name}: unresolved source ({discovered.error})")
     vector = discovered.manifest.vector
     if vector is not None:
-        return [_dataset_for(root, vector, discovered.manifest.name)]
+        return [_dataset_for(root, vector, discovered.manifest.name, discovered.manifest.name)]
     return [
-        _dataset_for(root, stem, f"{discovered.manifest.name}-{stem}") for stem in _stems(root)
+        _dataset_for(root, stem, f"{discovered.manifest.name}-{stem}", discovered.manifest.name)
+        for stem in _stems(root)
     ]
 
 

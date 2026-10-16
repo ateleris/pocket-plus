@@ -14,16 +14,26 @@
 #include <string.h>
 #include <time.h>
 
-/* CCSDS 124.0-B-1 allows F in 1..=65535. */
-#define PB_MAX_PACKET_BITS 65535UL
+#define PB_HEADER 4U
+#define PB_RECORD_HEADER 5U
+/* Room for one decoded field: F <= 65535 bits is at most 8192 bytes. */
+#define PB_DECODE_RESERVE (8192U + 64U)
+/* Room per compressed packet, per field byte; POCKET+ stays far below it. */
+#define PB_ENCODE_GROWTH 64U
+#define PB_OUTPUT_SLACK 4096U
 
-#define PB_COMPRESS_GROWTH   12U
-#define PB_DECOMPRESS_GROWTH 20U
-#define PB_OUTPUT_SLACK      4096U
+void *pb_xmalloc(size_t n) {
+    void *p = malloc(n ? n : 1U);
+    if (!p) {
+        fprintf(stderr, "adapter: out of memory (%lu bytes)\n", (unsigned long)n);
+        exit(1);
+    }
+    return p;
+}
 
 /* --- file IO ---------------------------------------------------------------------------------- */
 
-unsigned char *pb_read_file(const char *path, size_t *size) {
+static unsigned char *pb_read_file(const char *path, size_t *size) {
     FILE *f;
     long n;
     unsigned char *buf;
@@ -35,8 +45,7 @@ unsigned char *pb_read_file(const char *path, size_t *size) {
     if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return NULL; }
     n = ftell(f);
     if (n < 0 || fseek(f, 0, SEEK_SET) != 0) { fclose(f); return NULL; }
-    buf = (unsigned char *)malloc((size_t)n ? (size_t)n : 1U);
-    if (!buf) { fclose(f); return NULL; }
+    buf = (unsigned char *)pb_xmalloc((size_t)n);
     got = (size_t)n ? fread(buf, 1, (size_t)n, f) : 0U;
     fclose(f);
     if (got != (size_t)n) { free(buf); return NULL; }
@@ -44,7 +53,7 @@ unsigned char *pb_read_file(const char *path, size_t *size) {
     return buf;
 }
 
-int pb_write_file(const char *path, const void *data, size_t size) {
+static int pb_write_file(const char *path, const void *data, size_t size) {
     FILE *f = fopen(path, "wb");
     size_t put;
     if (!f) return -1;
@@ -53,34 +62,74 @@ int pb_write_file(const char *path, const void *data, size_t size) {
     return put == size ? 0 : -1;
 }
 
-/* --- keyed-flag parsing ----------------------------------------------------------------------- */
+static unsigned long pb_be32(const unsigned char *p) {
+    return ((unsigned long)p[0] << 24) | ((unsigned long)p[1] << 16) |
+           ((unsigned long)p[2] << 8) | (unsigned long)p[3];
+}
 
-typedef enum { PB_STR, PB_LONG, PB_ULONG } pb_kind;
+static void pb_put_be32(unsigned char *p, unsigned long v) {
+    p[0] = (unsigned char)(v >> 24);
+    p[1] = (unsigned char)(v >> 16);
+    p[2] = (unsigned char)(v >> 8);
+    p[3] = (unsigned char)v;
+}
+
+/* --- keyed flags ------------------------------------------------------------------------------ */
 
 typedef struct {
-    const char *key;
-    pb_kind kind;
-    void *dst;
-    int seen;
-} pb_flag;
+    const char *in;
+    const char *out;
+    long warmup;
+    long iterations;
+    int has_warmup;
+    int has_iterations;
+} pb_args;
 
-#define PB_FLAG(idx, k, kd, d) \
-    do { flags[idx].key = (k); flags[idx].kind = (kd); flags[idx].dst = (d); flags[idx].seen = 0; } \
-    while (0)
+static int pb_key_is(const char *arg, size_t klen, const char *key) {
+    return klen == strlen(key) && strncmp(arg, key, klen) == 0;
+}
 
-/* Parse `--key=value` flags from argv[first..). Every flag in the table is required, unknown keys
- * are rejected, and a value must parse completely. Returns 0, or 2 with a message on stderr. */
-static int pb_parse_flags(const char *sub, int argc, char **argv, int first, pb_flag *flags,
-                          size_t n) {
-    int i;
-    size_t k;
+static int pb_set_path(const char *sub, const char *key, const char *val, const char **dst) {
+    if (*dst) {
+        fprintf(stderr, "%s: flag --%s given more than once\n", sub, key);
+        return 2;
+    }
+    if (!*val) {
+        fprintf(stderr, "%s: flag --%s needs a non-empty value\n", sub, key);
+        return 2;
+    }
+    *dst = val;
+    return 0;
+}
 
-    for (i = first; i < argc; i++) {
+static int pb_set_count(const char *sub, const char *key, const char *val, long *dst, int *has) {
+    char *end = NULL;
+    long v;
+    if (*has) {
+        fprintf(stderr, "%s: flag --%s given more than once\n", sub, key);
+        return 2;
+    }
+    errno = 0;
+    v = strtol(val, &end, 10);
+    if (errno != 0 || end == val || *end || v < 0) {
+        fprintf(stderr, "%s: flag --%s must be a non-negative integer, got \"%s\"\n", sub, key, val);
+        return 2;
+    }
+    *dst = v;
+    *has = 1;
+    return 0;
+}
+
+/* --in and --out are required, --warmup and --iterations optional; anything else is a contract
+ * violation. Returns 0, or 2 with a message on stderr. */
+static int pb_parse_args(const char *sub, int argc, char **argv, pb_args *a) {
+    int i, rc = 0;
+
+    memset(a, 0, sizeof *a);
+    for (i = 2; i < argc && rc == 0; i++) {
         const char *arg = argv[i];
         const char *eq;
-        const char *val;
         size_t klen;
-        int matched = 0;
 
         if (arg[0] != '-' || arg[1] != '-') {
             fprintf(stderr, "%s: unexpected positional argument \"%s\"; the contract passes keyed "
@@ -93,89 +142,217 @@ static int pb_parse_flags(const char *sub, int argc, char **argv, int first, pb_
             return 2;
         }
         klen = (size_t)(eq - (arg + 2));
-        val = eq + 1;
-        for (k = 0; k < n; k++) {
-            if (strlen(flags[k].key) == klen && strncmp(flags[k].key, arg + 2, klen) == 0) {
-                matched = 1;
-                break;
-            }
-        }
-        if (!matched) {
+        if (pb_key_is(arg + 2, klen, "in")) {
+            rc = pb_set_path(sub, "in", eq + 1, &a->in);
+        } else if (pb_key_is(arg + 2, klen, "out")) {
+            rc = pb_set_path(sub, "out", eq + 1, &a->out);
+        } else if (pb_key_is(arg + 2, klen, "warmup")) {
+            rc = pb_set_count(sub, "warmup", eq + 1, &a->warmup, &a->has_warmup);
+        } else if (pb_key_is(arg + 2, klen, "iterations")) {
+            rc = pb_set_count(sub, "iterations", eq + 1, &a->iterations, &a->has_iterations);
+        } else {
             fprintf(stderr, "%s: unknown flag --%.*s; this adapter does not implement it, so the "
                             "harness and the adapter disagree about the contract\n",
                     sub, (int)klen, arg + 2);
             return 2;
         }
-        if (flags[k].seen) {
-            fprintf(stderr, "%s: flag --%s given more than once\n", sub, flags[k].key);
-            return 2;
-        }
-        flags[k].seen = 1;
-
-        if (flags[k].kind == PB_STR) {
-            if (!*val) {
-                fprintf(stderr, "%s: flag --%s needs a non-empty value\n", sub, flags[k].key);
-                return 2;
-            }
-            *(const char **)flags[k].dst = val;
-        } else {
-            char *end = NULL;
-            errno = 0;
-            if (flags[k].kind == PB_ULONG) {
-                unsigned long v;
-                if (*val == '-') {
-                    fprintf(stderr, "%s: flag --%s must be a non-negative integer, got \"%s\"\n",
-                            sub, flags[k].key, val);
-                    return 2;
-                }
-                v = strtoul(val, &end, 10);
-                if (errno != 0 || end == val || *end) {
-                    fprintf(stderr, "%s: flag --%s must be a non-negative integer, got \"%s\"\n",
-                            sub, flags[k].key, val);
-                    return 2;
-                }
-                *(unsigned long *)flags[k].dst = v;
-            } else {
-                long v = strtol(val, &end, 10);
-                if (errno != 0 || end == val || *end) {
-                    fprintf(stderr, "%s: flag --%s must be an integer, got \"%s\"\n",
-                            sub, flags[k].key, val);
-                    return 2;
-                }
-                *(long *)flags[k].dst = v;
-            }
-        }
     }
-
-    for (k = 0; k < n; k++) {
-        if (!flags[k].seen) {
-            fprintf(stderr, "%s: missing required flag --%s\n", sub, flags[k].key);
-            return 2;
-        }
+    if (rc != 0) return rc;
+    if (!a->in) {
+        fprintf(stderr, "%s: missing required flag --in\n", sub);
+        return 2;
     }
-    return 0;
-}
-
-/* Fills flags[base..base+5). */
-static void pb_param_flags(pb_flag *flags, size_t base, pb_params *p) {
-    flags += base;
-    PB_FLAG(0, "packet-bits", PB_ULONG, &p->packet_bits);
-    PB_FLAG(1, "pt", PB_LONG, &p->pt);
-    PB_FLAG(2, "ft", PB_LONG, &p->ft);
-    PB_FLAG(3, "rt", PB_LONG, &p->rt);
-    PB_FLAG(4, "robustness", PB_LONG, &p->robustness);
-}
-
-static int pb_check_packet_bits(const char *sub, const pb_params *p) {
-    if (p->packet_bits < 1UL || p->packet_bits > PB_MAX_PACKET_BITS) {
-        fprintf(stderr, "%s: --packet-bits must be 1..%lu (F, the packet field width in bits)\n",
-                sub, PB_MAX_PACKET_BITS);
+    if (!a->out) {
+        fprintf(stderr, "%s: missing required flag --out\n", sub);
         return 2;
     }
     return 0;
 }
 
-/* --- capabilities ----------------------------------------------------------------------------- */
+/* --- the record container --------------------------------------------------------------------- */
+
+typedef struct {
+    int f_present;
+    unsigned long f;
+    pb_record *recs;
+    size_t n;
+} pb_container;
+
+/* Returns 0, or 2 when the container is malformed (a record header cut off), which only a harness
+ * bug produces. */
+static int pb_parse_container(const char *sub, const unsigned char *buf, size_t size,
+                              pb_container *c) {
+    size_t pos = PB_HEADER, cap = 0;
+
+    memset(c, 0, sizeof *c);
+    if (size < PB_HEADER) return 0;
+    c->f_present = 1;
+    c->f = pb_be32(buf);
+    while (pos < size) {
+        pb_record *r;
+        size_t want, have;
+
+        if (size - pos < PB_RECORD_HEADER) {
+            fprintf(stderr, "%s: malformed record container: record header cut off at byte %lu\n",
+                    sub, (unsigned long)pos);
+            free(c->recs);
+            c->recs = NULL;
+            return 2;
+        }
+        if (c->n == cap) {
+            pb_record *grown;
+            cap = cap ? cap * 2U : 256U;
+            grown = (pb_record *)realloc(c->recs, cap * sizeof *grown);
+            if (!grown) {
+                fprintf(stderr, "%s: out of memory\n", sub);
+                exit(1);
+            }
+            c->recs = grown;
+        }
+        r = &c->recs[c->n++];
+        r->kind = buf[pos];
+        r->bits = pb_be32(buf + pos + 1U);
+        pos += PB_RECORD_HEADER;
+        want = (size_t)((r->bits + 7UL) / 8UL);
+        have = size - pos;
+        r->data = buf + pos;
+        r->len = want < have ? want : have;
+        pos += r->len;
+    }
+    return 0;
+}
+
+/* --- passes ----------------------------------------------------------------------------------- */
+
+typedef struct {
+    unsigned char *buf;
+    size_t cap;
+    size_t size;
+} pb_out;
+
+/* The buffer outlives the passes, so a timed pass reuses what the warmup or first pass sized. */
+static void pb_room(pb_out *o, size_t n) {
+    size_t cap;
+    unsigned char *grown;
+
+    if (o->cap - o->size >= n) return;
+    cap = o->cap * 2U;
+    if (cap < o->size + n) cap = o->size + n;
+    grown = (unsigned char *)realloc(o->buf, cap);
+    if (!grown) {
+        fprintf(stderr, "adapter: out of memory\n");
+        exit(1);
+    }
+    o->buf = grown;
+    o->cap = cap;
+}
+
+typedef struct {
+    size_t records_out;
+    long stopped_at; /* -1: every record was processed */
+    int error;
+} pb_pass;
+
+static void pb_compress_pass(const pb_adapter *a, const pb_container *in, pb_out *o, pb_pass *r) {
+    void *state = NULL;
+    size_t i;
+    int rc;
+
+    memset(r, 0, sizeof *r);
+    r->stopped_at = -1;
+    o->size = 0;
+    pb_room(o, PB_HEADER);
+    pb_put_be32(o->buf, in->f_present ? in->f : 0UL);
+    o->size = PB_HEADER;
+
+    rc = a->enc_create(a->ctx, in->f_present, in->f, in->n ? &in->recs[0] : NULL, &state);
+    if (rc != 0) {
+        r->stopped_at = 0;
+        r->error = rc;
+        return;
+    }
+    for (i = 1; i < in->n; i++) {
+        const pb_record *rec = &in->recs[i];
+        size_t hdr;
+        unsigned long bits = 0;
+
+        pb_room(o, PB_RECORD_HEADER + PB_ENCODE_GROWTH * (rec->len > 128U ? rec->len : 128U));
+        hdr = o->size;
+        rc = a->enc_packet(state, rec->kind, rec->data, rec->len, o->buf + hdr + PB_RECORD_HEADER,
+                           o->cap - hdr - PB_RECORD_HEADER, &bits);
+        if (rc != 0) {
+            r->stopped_at = (long)i;
+            r->error = rc;
+            break;
+        }
+        o->buf[hdr] = 0;
+        pb_put_be32(o->buf + hdr + 1U, bits);
+        o->size = hdr + PB_RECORD_HEADER + (size_t)((bits + 7UL) / 8UL);
+        r->records_out++;
+    }
+    a->enc_destroy(state);
+}
+
+static void pb_decompress_pass(const pb_adapter *a, const pb_container *in, pb_out *o,
+                               pb_pass *r) {
+    void *state = NULL;
+    size_t i;
+    int rc;
+
+    memset(r, 0, sizeof *r);
+    r->stopped_at = -1;
+    o->size = 0;
+    pb_room(o, PB_HEADER);
+    pb_put_be32(o->buf, 0UL);
+    o->size = PB_HEADER;
+
+    rc = a->dec_create(a->ctx, in->f, in->recs, in->n, &state);
+    if (rc != 0) {
+        r->stopped_at = 0;
+        r->error = rc;
+        return;
+    }
+    for (i = 0; i < in->n; i++) {
+        const pb_record *rec = &in->recs[i];
+        size_t hdr;
+        unsigned long bits = 0;
+        int status;
+
+        pb_room(o, PB_RECORD_HEADER + (rec->len > PB_DECODE_RESERVE ? rec->len : PB_DECODE_RESERVE));
+        hdr = o->size;
+        if (rec->kind & 1U) {
+            a->dec_lost(state);
+            status = PB_LOST;
+        } else {
+            unsigned long present = (unsigned long)rec->len * 8UL;
+            status = a->dec_packet(state, rec->data, rec->len, rec->bits,
+                                   present < rec->bits ? present : rec->bits,
+                                   o->buf + hdr + PB_RECORD_HEADER, o->cap - hdr - PB_RECORD_HEADER,
+                                   &bits);
+            if (status < 0) {
+                r->stopped_at = (long)i;
+                r->error = status;
+                break;
+            }
+            if (status != PB_DECODED) {
+                status = PB_FAILED;
+                bits = 0;
+            }
+        }
+        o->buf[hdr] = (unsigned char)status;
+        pb_put_be32(o->buf + hdr + 1U, bits);
+        o->size = hdr + PB_RECORD_HEADER + (size_t)((bits + 7UL) / 8UL);
+        r->records_out++;
+    }
+    pb_put_be32(o->buf, a->dec_trailer_f(state));
+    a->dec_destroy(state);
+}
+
+/* --- the verbs -------------------------------------------------------------------------------- */
+
+static long long pb_ns_since(struct timespec a, struct timespec b) {
+    return (long long)(b.tv_sec - a.tv_sec) * 1000000000LL + (long long)(b.tv_nsec - a.tv_nsec);
+}
 
 static void pb_json_str(const char *s) {
     const unsigned char *p = (const unsigned char *)(s ? s : "");
@@ -193,249 +370,113 @@ static void pb_json_str(const char *s) {
     putchar('"');
 }
 
-static void pb_print_capabilities(const pb_adapter *a) {
-    printf("{\"ops\":[");
-    if (a->compress) printf("\"compress\"");
-    if (a->decompress) printf("%s\"decompress\"", a->compress ? "," : "");
-    printf("],\"timing_tier\":");
-    pb_json_str(a->caps.timing_tier ? a->caps.timing_tier : "in_process");
-    printf(",\"reference_conformant\":%s", a->caps.reference_conformant ? "true" : "false");
-    printf(",\"conformance_compress\":%s", a->conformance_compress ? "true" : "false");
-    printf(",\"conformance_decompress\":%s", a->conformance_decompress ? "true" : "false");
-    printf(",\"param_schedule\":");
-    pb_json_str(a->caps.param_schedule);
-    printf(",\"build_profile\":");
-    pb_json_str(a->caps.build_profile);
-    printf(",\"limitations\":");
-    pb_json_str(a->caps.limitations);
+static void pb_print_summary(size_t records_in, const pb_pass *r, const long long *nanos,
+                             long timed, int with_nanos) {
+    long i;
+    printf("{\"records_in\":%lu,\"records_out\":%lu,\"stopped_at\":", (unsigned long)records_in,
+           (unsigned long)r->records_out);
+    if (r->stopped_at < 0) {
+        printf("null,\"error\":null");
+    } else {
+        printf("%ld,\"error\":", r->stopped_at);
+        if (r->error == PB_NOT_REPRESENTABLE) {
+            pb_json_str("input not representable by this codec's API");
+        } else if (r->error == PB_OUTPUT_FULL) {
+            pb_json_str("output buffer exhausted");
+        } else {
+            printf("\"codec error %d\"", r->error);
+        }
+    }
+    if (with_nanos) {
+        printf(",\"nanos\":[");
+        for (i = 0; i < timed; i++) printf("%s%lld", i ? "," : "", nanos[i]);
+        printf("]");
+    }
     printf("}\n");
 }
 
-/* --- compress / decompress -------------------------------------------------------------------- */
-
-/* `fed` is the buffer handed to the codec; `raw` is the uncompressed size when known (decompress
- * output cannot be smaller than it), else 0. */
-static size_t pb_out_cap(int is_compress, size_t fed, size_t raw) {
-    size_t cap = (is_compress ? PB_COMPRESS_GROWTH : PB_DECOMPRESS_GROWTH) * fed + PB_OUTPUT_SLACK;
-    if (!is_compress && cap < raw + PB_OUTPUT_SLACK) cap = raw + PB_OUTPUT_SLACK;
-    return cap;
-}
-
-static int pb_cmd_oneshot(const pb_adapter *a, int argc, char **argv, int is_compress) {
+static int pb_cmd_verb(const pb_adapter *a, int argc, char **argv, int is_compress) {
     const char *sub = is_compress ? "compress" : "decompress";
-    pb_run_fn run = is_compress ? a->compress : a->decompress;
-    const char *in_path = NULL;
-    const char *out_path = NULL;
-    pb_params p;
-    pb_flag flags[7];
-    unsigned char *input = NULL;
-    unsigned char *output = NULL;
-    size_t in_size = 0, out_cap, out_size = 0;
+    void (*one_pass)(const pb_adapter *, const pb_container *, pb_out *, pb_pass *) =
+        is_compress ? pb_compress_pass : pb_decompress_pass;
+    pb_args args;
+    pb_container in;
+    pb_out o;
+    pb_pass r;
+    unsigned char *input;
+    size_t in_size = 0, i, payload = 0;
+    long long *nanos;
+    long k, timed = 0;
     int rc;
 
-    memset(&p, 0, sizeof p);
-    PB_FLAG(0, "in", PB_STR, &in_path);
-    PB_FLAG(1, "out", PB_STR, &out_path);
-    pb_param_flags(flags, 2, &p);
-    rc = pb_parse_flags(sub, argc, argv, 2, flags, sizeof flags / sizeof flags[0]);
+    rc = pb_parse_args(sub, argc, argv, &args);
     if (rc != 0) return rc;
-    rc = pb_check_packet_bits(sub, &p);
-    if (rc != 0) return rc;
-    if (!run) {
-        fprintf(stderr, "%s: not supported by this implementation\n", sub);
-        return 2;
-    }
-
-    input = pb_read_file(in_path, &in_size);
+    input = pb_read_file(args.in, &in_size);
     if (!input) {
-        fprintf(stderr, "%s: cannot read %s\n", sub, in_path);
+        fprintf(stderr, "%s: cannot read %s\n", sub, args.in);
         return 1;
     }
-    out_cap = pb_out_cap(is_compress, in_size, 0);
-    output = (unsigned char *)malloc(out_cap);
-    if (!output) {
-        free(input);
-        fprintf(stderr, "%s: out of memory\n", sub);
-        return 1;
-    }
-
-    rc = run(a->ctx, input, in_size, &p, output, out_cap, &out_size);
+    rc = pb_parse_container(sub, input, in_size, &in);
     if (rc != 0) {
-        fprintf(stderr, "%s: codec error %d\n", sub, rc);
-        rc = 1;
-    } else if (pb_write_file(out_path, output, out_size) != 0) {
-        fprintf(stderr, "%s: cannot write %s\n", sub, out_path);
-        rc = 1;
-    }
-    free(output);
-    free(input);
-    return rc;
-}
-
-/* --- bench ------------------------------------------------------------------------------------ */
-
-static long long pb_ns_since(struct timespec a, struct timespec b) {
-    return (long long)(b.tv_sec - a.tv_sec) * 1000000000LL + (long long)(b.tv_nsec - a.tv_nsec);
-}
-
-static int pb_cmd_bench(const pb_adapter *a, int argc, char **argv) {
-    const char *op = NULL;
-    const char *in_path = NULL;
-    long warmup = 0, iterations = 0;
-    pb_params p;
-    pb_flag flags[9];
-    pb_run_fn run;
-    unsigned char *input = NULL;
-    unsigned char *compressed = NULL;
-    unsigned char *output = NULL;
-    long long *nanos = NULL;
-    const unsigned char *bench_in;
-    size_t in_size = 0, bench_in_size, out_cap, out_size = 0, stride, packets_per_iter;
-    int is_compress, rc;
-    long i;
-
-    memset(&p, 0, sizeof p);
-    PB_FLAG(0, "op", PB_STR, &op);
-    PB_FLAG(1, "in", PB_STR, &in_path);
-    PB_FLAG(2, "warmup", PB_LONG, &warmup);
-    PB_FLAG(3, "iterations", PB_LONG, &iterations);
-    pb_param_flags(flags, 4, &p);
-    rc = pb_parse_flags("bench", argc, argv, 2, flags, sizeof flags / sizeof flags[0]);
-    if (rc != 0) return rc;
-    rc = pb_check_packet_bits("bench", &p);
-    if (rc != 0) return rc;
-
-    is_compress = strcmp(op, "compress") == 0;
-    if (!is_compress && strcmp(op, "decompress") != 0) {
-        fprintf(stderr, "bench: --op must be compress or decompress, got \"%s\"\n", op);
-        return 2;
-    }
-    if (warmup < 0 || iterations < 0) {
-        fprintf(stderr, "bench: --warmup and --iterations must be non-negative\n");
-        return 2;
-    }
-    run = is_compress ? a->compress : a->decompress;
-    if (!run) {
-        fprintf(stderr, "bench: %s is not supported by this implementation\n", op);
-        return 2;
-    }
-    /* The input is compressed once outside the timer, so a decompress bench needs both ops. */
-    if (!is_compress && !a->compress) {
-        fprintf(stderr, "bench: decompress needs compress to prepare its input\n");
-        return 2;
-    }
-
-    input = pb_read_file(in_path, &in_size);
-    if (!input) {
-        fprintf(stderr, "bench: cannot read %s\n", in_path);
-        return 1;
-    }
-    stride = (size_t)((p.packet_bits + 7UL) / 8UL);
-    packets_per_iter = in_size / stride;
-
-    bench_in = input;
-    bench_in_size = in_size;
-    if (!is_compress) {
-        size_t cap = pb_out_cap(1, in_size, 0);
-        size_t csize = 0;
-        compressed = (unsigned char *)malloc(cap);
-        if (!compressed) {
-            free(input);
-            fprintf(stderr, "bench: out of memory\n");
-            return 1;
-        }
-        rc = a->compress(a->ctx, input, in_size, &p, compressed, cap, &csize);
-        if (rc != 0) {
-            fprintf(stderr, "bench: pre-compress failed with codec error %d\n", rc);
-            free(compressed);
-            free(input);
-            return 1;
-        }
-        bench_in = compressed;
-        bench_in_size = csize;
-    }
-
-    out_cap = pb_out_cap(is_compress, bench_in_size, is_compress ? 0 : in_size);
-    output = (unsigned char *)malloc(out_cap);
-    nanos = (long long *)malloc(sizeof(long long) * (size_t)(iterations > 0 ? iterations : 1));
-    if (!output || !nanos) {
-        free(nanos);
-        free(output);
-        free(compressed);
         free(input);
-        fprintf(stderr, "bench: out of memory\n");
-        return 1;
+        return rc;
+    }
+
+    for (i = 0; i < in.n; i++) payload += in.recs[i].len;
+    o.size = 0;
+    o.cap = PB_HEADER + in.n * PB_RECORD_HEADER + PB_OUTPUT_SLACK +
+            (is_compress ? 12U * payload + PB_ENCODE_GROWTH * 8192U
+                         : in.n * (size_t)((in.f + 7UL) / 8UL) + PB_DECODE_RESERVE);
+    o.buf = (unsigned char *)pb_xmalloc(o.cap);
+    nanos = (long long *)pb_xmalloc(sizeof(long long) *
+                                    (size_t)(args.iterations > 0 ? args.iterations : 1));
+
+    for (k = 0; k < args.warmup; k++) one_pass(a, &in, &o, &r);
+    if (args.iterations > 0) {
+        for (k = 0; k < args.iterations; k++) {
+            struct timespec t0, t1;
+            clock_gettime(CLOCK_MONOTONIC, &t0);
+            one_pass(a, &in, &o, &r);
+            clock_gettime(CLOCK_MONOTONIC, &t1);
+            nanos[timed++] = pb_ns_since(t0, t1);
+            if (r.stopped_at >= 0) break;
+        }
+    } else {
+        one_pass(a, &in, &o, &r);
     }
 
     rc = 0;
-    for (i = 0; i < warmup && rc == 0; i++)
-        rc = run(a->ctx, bench_in, bench_in_size, &p, output, out_cap, &out_size);
-    for (i = 0; i < iterations && rc == 0; i++) {
-        struct timespec t0, t1;
-        clock_gettime(CLOCK_MONOTONIC, &t0);
-        rc = run(a->ctx, bench_in, bench_in_size, &p, output, out_cap, &out_size);
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-        nanos[i] = pb_ns_since(t0, t1);
-    }
-
-    if (rc != 0) {
-        fprintf(stderr, "bench: codec error %d\n", rc);
+    if (pb_write_file(args.out, o.buf, o.size) != 0) {
+        fprintf(stderr, "%s: cannot write %s\n", sub, args.out);
         rc = 1;
-    } else {
-        printf("{\"op\":\"%s\",\"iterations\":%ld,\"packets_per_iter\":%lu,\"nanos\":[",
-               op, iterations, (unsigned long)packets_per_iter);
-        for (i = 0; i < iterations; i++) printf("%s%lld", i ? "," : "", nanos[i]);
-        printf("]}\n");
     }
-
+    pb_print_summary(in.n, &r, nanos, timed, args.has_iterations);
+    if (r.stopped_at >= 0 && r.error == PB_OUTPUT_FULL) rc = 1;
     free(nanos);
-    free(output);
-    free(compressed);
+    free(o.buf);
+    free(in.recs);
     free(input);
     return rc;
 }
-
-/* --- conformance ------------------------------------------------------------------------------ */
-
-static int pb_cmd_conformance(const pb_adapter *a, int argc, char **argv, int is_compress) {
-    const char *sub = is_compress ? "conformance-compress" : "conformance-decompress";
-    pb_conformance_fn fn = is_compress ? a->conformance_compress : a->conformance_decompress;
-    const char *in_path = NULL;
-    const char *out_path = NULL;
-    pb_flag flags[2];
-    int rc;
-
-    PB_FLAG(0, "in", PB_STR, &in_path);
-    PB_FLAG(1, "out", PB_STR, &out_path);
-    rc = pb_parse_flags(sub, argc, argv, 2, flags, sizeof flags / sizeof flags[0]);
-    if (rc != 0) return rc;
-    if (!fn) {
-        fprintf(stderr, "%s: not supported by this implementation\n", sub);
-        return 2;
-    }
-    return fn(a->ctx, in_path, out_path);
-}
-
-/* --- dispatch --------------------------------------------------------------------------------- */
 
 int pb_main(int argc, char **argv, const pb_adapter *a) {
     const char *cmd;
 
     if (argc < 2) {
-        fprintf(stderr, "usage: adapter <capabilities|compress|decompress|bench|"
-                        "conformance-compress|conformance-decompress> [--key=value ...]\n");
+        fprintf(stderr, "usage: adapter <capabilities|compress|decompress> [--key=value ...]\n");
         return 2;
     }
     cmd = argv[1];
     if (strcmp(cmd, "capabilities") == 0) {
-        pb_print_capabilities(a);
+        printf("{\"build_profile\":");
+        pb_json_str(a->caps.build_profile);
+        printf(",\"limitations\":");
+        pb_json_str(a->caps.limitations);
+        printf("}\n");
         return 0;
     }
-    if (strcmp(cmd, "compress") == 0) return pb_cmd_oneshot(a, argc, argv, 1);
-    if (strcmp(cmd, "decompress") == 0) return pb_cmd_oneshot(a, argc, argv, 0);
-    if (strcmp(cmd, "bench") == 0) return pb_cmd_bench(a, argc, argv);
-    if (strcmp(cmd, "conformance-compress") == 0) return pb_cmd_conformance(a, argc, argv, 1);
-    if (strcmp(cmd, "conformance-decompress") == 0) return pb_cmd_conformance(a, argc, argv, 0);
+    if (strcmp(cmd, "compress") == 0) return pb_cmd_verb(a, argc, argv, 1);
+    if (strcmp(cmd, "decompress") == 0) return pb_cmd_verb(a, argc, argv, 0);
     fprintf(stderr, "unknown subcommand: %s\n", cmd);
     return 2;
 }

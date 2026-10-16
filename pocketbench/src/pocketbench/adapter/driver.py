@@ -1,12 +1,10 @@
 """Drive per-implementation adapter CLIs that speak the pocketbench contract.
 
-pocketbench core owns iteration/warmup counts, dataset staging, metric derivation, aggregation and
-conformance grading; the adapter owns param mapping and the codec calls, and must write its output at
-the exact path core names. Core talks only to the contract and never knows the codec's language.
-Adapters are launched with cwd set to the adapter's own folder; all data paths are absolute.
-
-Every subcommand takes keyed `--key=value` flags, and the argv for each verb is built in exactly
-one place here (`oneshot_argv` / `conformance_argv` / `bench`), so no other module encodes the shape.
+The contract is three subcommands: ``capabilities`` (report text, gating nothing) and the two codec
+verbs ``compress`` / ``decompress``, which read and write the record container (``records.py``).
+Bench is the same verb with ``--warmup`` / ``--iterations``. Adapters are launched with cwd set to
+the adapter's own folder; all data paths are absolute. The argv for each verb is built in exactly
+one place here (``verb_argv``), so no other module encodes the shape.
 """
 
 from __future__ import annotations
@@ -15,24 +13,20 @@ import json
 import shlex
 import statistics
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
+from pocketbench import records
 from pocketbench.adapter.discovery import DiscoveredAdapter, entrypoint_path, source_present
 from pocketbench.benchmark import BenchMetrics, BenchRecord, derive
+
+VERBS = ("compress", "decompress")
 
 
 @dataclass(frozen=True)
 class Capabilities:
-    """Self-reported metadata from the adapter's `capabilities` subcommand."""
+    """Self-reported report text from the adapter's ``capabilities`` subcommand."""
 
-    ops: list[str]
-    timing_tier: str  # "in_process" | "subprocess"
-    reference_conformant: bool
-    conformance_compress: bool
-    conformance_decompress: bool
-    param_schedule: str
-    # Optional (default ""): a minimal adapter such as the mock reports neither.
     build_profile: str = ""
     limitations: str = ""
 
@@ -49,14 +43,14 @@ class AdapterRunResult:
 
 
 def _launch(d: DiscoveredAdapter, *parts) -> list[str]:
-    """Build the argv: `[interpreter?] <entrypoint> <parts...>` (all stringified)."""
+    """Build the argv: ``[interpreter?] <entrypoint> <parts...>`` (all stringified)."""
     entry = str(entrypoint_path(d))
     prefix = shlex.split(d.manifest.interpreter) if d.manifest.interpreter else []
     return [*prefix, entry, *[str(p) for p in parts]]
 
 
 def launch_argv(d: DiscoveredAdapter, *parts) -> list[str]:
-    """Public: the argv that runs a subcommand, for callers (e.g. profiling) that must wrap it."""
+    """Public: the argv that runs a subcommand, for callers that must wrap it."""
     return _launch(d, *parts)
 
 
@@ -73,12 +67,6 @@ def version(d: DiscoveredAdapter, *, timeout: int = 30) -> str:
         return "unknown"
     out = (proc.stdout or proc.stderr).strip().splitlines()
     return out[0] if out else "unknown"
-
-
-def _run(d: DiscoveredAdapter, argv: list[str], timeout: int) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        argv, cwd=d.manifest.dir, capture_output=True, text=True, timeout=timeout
-    )
 
 
 def build(
@@ -102,114 +90,108 @@ def build(
 
 
 def capabilities(d: DiscoveredAdapter, *, timeout: int = 30) -> Capabilities:
-    """Run `capabilities` and parse the self-reported metadata JSON."""
+    """Run ``capabilities``; also the smoke test that the built binary speaks the contract."""
     argv = _launch(d, "capabilities")
-    proc = _run(d, argv, timeout)
+    proc = subprocess.run(argv, cwd=d.manifest.dir, capture_output=True, text=True, timeout=timeout)
     if proc.returncode != 0:
         raise RuntimeError(f"{d.manifest.name}: capabilities failed\n{proc.stderr.strip()}")
     data = json.loads(proc.stdout)
     return Capabilities(
-        ops=list(data["ops"]),
-        timing_tier=data["timing_tier"],
-        reference_conformant=bool(data["reference_conformant"]),
-        conformance_compress=bool(data["conformance_compress"]),
-        conformance_decompress=bool(data["conformance_decompress"]),
-        param_schedule=data["param_schedule"],
         build_profile=str(data.get("build_profile", "")),
         limitations=str(data.get("limitations", "")),
     )
 
 
+def verb_argv(
+    d: DiscoveredAdapter, verb: str, input_path: Path, output_path: Path,
+    *, warmup: int | None = None, iterations: int | None = None,
+) -> list[str]:
+    """The argv for ``compress`` / ``decompress``."""
+    if verb not in VERBS:
+        raise ValueError(f"verb must be one of {VERBS}, got {verb!r}")
+    flags = [f"--in={input_path}", f"--out={output_path}"]
+    if warmup is not None:
+        flags.append(f"--warmup={warmup}")
+    if iterations is not None:
+        flags.append(f"--iterations={iterations}")
+    return _launch(d, verb, *flags)
+
+
 @dataclass(frozen=True)
-class Params:
-    """The uniform per-packet parameter set; a codec ignores any it does not use."""
+class VerbRun:
+    """Outcome of one ``compress`` / ``decompress`` run."""
 
-    packet_bits: int  # F (large_f) in bits; the adapter derives the byte stride as ceil(F/8)
-    pt: int
-    ft: int
-    rt: int
-    robustness: int
+    returncode: int | None           # None: timed out; negative: killed by that signal
+    stderr: str
+    summary: dict | None             # the adapter's stdout JSON
+    output: records.Container | None  # None when no usable output file was written
+    output_error: str | None = None   # why the output file could not be parsed
 
+    @property
+    def completed(self) -> bool:
+        """Exited 0, wrote output and processed every record."""
+        return (
+            self.returncode == 0 and self.output is not None and self.summary is not None
+            and self.summary.get("stopped_at") is None
+        )
 
-def _param_flags(params: Params) -> list[str]:
-    """The uniform parameter set as `--key=value` flags.
-
-    An adapter must reject a flag it does not know (exit 2), so adding a parameter here is a
-    contract change that every adapter not carrying it reports by name.
-    """
-    return [
-        f"--packet-bits={params.packet_bits}",
-        f"--pt={params.pt}",
-        f"--ft={params.ft}",
-        f"--rt={params.rt}",
-        f"--robustness={params.robustness}",
-    ]
-
-
-def oneshot_argv(
-    d: DiscoveredAdapter, sub: str, params: Params, input_path: Path, output_path: Path
-) -> list[str]:
-    """The argv for `compress`/`decompress`, for callers (profiling) that must wrap it."""
-    return _launch(d, sub, f"--in={input_path}", f"--out={output_path}", *_param_flags(params))
-
-
-def conformance_argv(
-    d: DiscoveredAdapter, sub: str, input_path: Path, output_path: Path
-) -> list[str]:
-    """The argv for one `conformance-*` vector, for callers that must wrap it."""
-    return _launch(d, sub, f"--in={input_path}", f"--out={output_path}")
+    @property
+    def reason(self) -> str:
+        if self.returncode is None:
+            return "timeout"
+        if self.returncode < 0:
+            return f"crashed: signal {-self.returncode}"
+        if self.returncode != 0:
+            lines = self.stderr.strip().splitlines()
+            return f"exit {self.returncode}: {lines[0]}" if lines else f"exit {self.returncode}"
+        if self.output_error is not None:
+            return f"malformed output: {self.output_error}"
+        if self.output is None:
+            return "no output written"
+        if self.summary is None:
+            return "no summary printed"
+        if self.summary.get("error"):
+            return f"stopped: {self.summary['error']}"
+        return "ok"
 
 
-def _one_shot(
-    d: DiscoveredAdapter, sub: str, params: Params, input_path: Path, output_path: Path, timeout: int
-) -> AdapterRunResult:
-    """Run a params-carrying one-shot op (compress/decompress) to an exact output path."""
-    argv = oneshot_argv(d, sub, params, input_path, output_path)
-    proc = _run(d, argv, timeout)
-    ok = proc.returncode == 0 and Path(output_path).exists()
-    return AdapterRunResult(ok, argv, proc.returncode, proc.stdout, proc.stderr)
+def _text(data: bytes | str | None) -> str:
+    if data is None:
+        return ""
+    return data if isinstance(data, str) else data.decode("utf-8", "replace")
 
 
-def compress(
-    d: DiscoveredAdapter, params: Params, input_path: Path, output_path: Path, *, timeout: int = 300
-) -> AdapterRunResult:
-    """Compress ``input_path`` to exactly ``output_path``."""
-    return _one_shot(d, "compress", params, input_path, output_path, timeout)
-
-
-def decompress(
-    d: DiscoveredAdapter, params: Params, input_path: Path, output_path: Path, *, timeout: int = 300
-) -> AdapterRunResult:
-    """Decompress ``input_path`` to exactly ``output_path``."""
-    return _one_shot(d, "decompress", params, input_path, output_path, timeout)
-
-
-def _conformance(
-    d: DiscoveredAdapter, sub: str, input_path: Path, output_path: Path, timeout: int
-) -> AdapterRunResult:
-    argv = conformance_argv(d, sub, input_path, output_path)
-    proc = _run(d, argv, timeout)
-    ok = proc.returncode == 0 and Path(output_path).exists()
-    return AdapterRunResult(ok, argv, proc.returncode, proc.stdout, proc.stderr)
-
-
-def conformance_compress(
-    d: DiscoveredAdapter, input_path: Path, output_path: Path, *, timeout: int = 60
-) -> AdapterRunResult:
-    """Run one UAB/CNES encoder vector through the adapter."""
-    return _conformance(d, "conformance-compress", input_path, output_path, timeout)
-
-
-def conformance_decompress(
-    d: DiscoveredAdapter, input_path: Path, output_path: Path, *, timeout: int = 60
-) -> AdapterRunResult:
-    """Run one UAB/CNES decoder vector through the adapter."""
-    return _conformance(d, "conformance-decompress", input_path, output_path, timeout)
+def run_verb(
+    d: DiscoveredAdapter, verb: str, input_path: Path, output_path: Path,
+    *, warmup: int | None = None, iterations: int | None = None, timeout: int = 300,
+) -> VerbRun:
+    """Run one verb to exactly ``output_path`` and collect everything it produced."""
+    output_path = Path(output_path)
+    output_path.unlink(missing_ok=True)
+    argv = verb_argv(d, verb, input_path, output_path, warmup=warmup, iterations=iterations)
+    try:
+        proc = subprocess.run(argv, cwd=d.manifest.dir, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        return VerbRun(None, _text(exc.stderr), None, None)
+    stdout = _text(proc.stdout).strip()
+    try:
+        summary = json.loads(stdout) if stdout else None
+    except json.JSONDecodeError:
+        summary = None
+    if not isinstance(summary, dict):
+        summary = None
+    output, output_error = None, None
+    if output_path.exists():
+        try:
+            output = records.decode(output_path.read_bytes())
+        except ValueError as exc:
+            output_error = str(exc)
+    return VerbRun(proc.returncode, _text(proc.stderr), summary, output, output_error)
 
 
 @dataclass(frozen=True)
 class BenchPayload:
-    """Raw timed-nanos payload from the adapter's `bench` subcommand."""
+    """Raw timed-nanos payload of a verb run with ``--iterations``."""
 
     op: str
     iterations: int
@@ -218,34 +200,19 @@ class BenchPayload:
 
 
 def bench(
-    d: DiscoveredAdapter,
-    op: str,
-    input_path: Path,
-    params: Params,
-    *,
-    warmup: int,
-    iterations: int,
-    timeout: int = 1800,
+    d: DiscoveredAdapter, verb: str, input_path: Path, output_path: Path,
+    *, warmup: int, iterations: int, packets: int, timeout: int = 1800,
 ) -> BenchPayload:
-    """Run the adapter's in-process bench loop; return the raw-nanos payload.
+    """Run ``verb`` with the in-process warmup + timed loop; return the raw-nanos payload.
 
-    The adapter loads ``input_path`` once, runs ``op`` ``warmup`` times untimed and ``iterations``
-    times timed, and prints the payload as JSON. Core derives metrics (see ``to_metrics``).
+    Core derives the metrics (see ``to_metrics``); ``packets`` is how many packets one pass covers.
     """
-    argv = _launch(
-        d, "bench", f"--op={op}", f"--in={input_path}",
-        f"--warmup={warmup}", f"--iterations={iterations}", *_param_flags(params),
-    )
-    proc = _run(d, argv, timeout)
-    if proc.returncode != 0:
-        raise RuntimeError(f"{d.manifest.name}: bench {op} failed\n{proc.stderr.strip()}")
-    data = json.loads(proc.stdout)
-    return BenchPayload(
-        op=data["op"],
-        iterations=int(data["iterations"]),
-        packets_per_iter=int(data["packets_per_iter"]),
-        nanos=[int(n) for n in data["nanos"]],
-    )
+    run = run_verb(d, verb, input_path, output_path, warmup=warmup, iterations=iterations,
+                   timeout=timeout)
+    if not run.completed:
+        raise RuntimeError(f"{d.manifest.name}: bench {verb} failed ({run.reason})\n{run.stderr.strip()}")
+    return BenchPayload(op=verb, iterations=iterations, packets_per_iter=packets,
+                        nanos=[int(n) for n in run.summary["nanos"]])
 
 
 def to_metrics(
@@ -266,4 +233,4 @@ def to_metrics(
         kbps=0.0,        # recomputed by derive
         num_packets=payload.packets_per_iter,
     )
-    return derive(record, packet_bits=packet_bits)
+    return replace(derive(record, packet_bits=packet_bits), iterations=len(payload.nanos))

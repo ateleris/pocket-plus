@@ -1,15 +1,14 @@
 """Correctness validation for CCSDS 124.0-B-1 implementations.
 
-Three checks:
+Three checks, all off the same ``compress`` / ``decompress`` verbs every command uses:
 
-1. round-trip  - decompress(compress(x)) == x.
-2. reference   - compressed output is byte-identical to the ``expected-output/*.pkt`` shipped
-                 with the test vectors.
+1. round-trip  - decompress(compress(x)) decodes every packet and reproduces x.
+2. reference   - the compressed packets are byte-identical to the ``expected-output/*.pkt``
+                 shipped with the test vectors.
 3. cross-impl  - every selected impl emits byte-identical packets for the same dataset (by
                  SHA-256), equal to the reference packet's hash when one is present.
 
-:func:`validate` compresses each (impl, dataset) once in an isolated working directory and derives
-all three from that.
+Every implementation goes through every check.
 """
 
 from __future__ import annotations
@@ -19,10 +18,9 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from pocketbench import adapter
-from pocketbench.adapter import Params
+from pocketbench import adapter, records
 from pocketbench.config import Dataset
-from pocketbench.orchestrate import Prepared
+from pocketbench.orchestrate import Prepared, dataset_input
 
 
 @dataclass
@@ -35,7 +33,11 @@ class ValidationResult:
 
 
 def sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return _digest(path.read_bytes())
+
+
+def _digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
 def cross_impl_verdict(
@@ -43,7 +45,7 @@ def cross_impl_verdict(
 ) -> tuple[bool, str]:
     """Pure check: are all impl packet hashes equal (and equal to reference)?
 
-    ``hashes`` maps impl name -> SHA-256 of its compressed packet.
+    ``hashes`` maps impl name -> SHA-256 of its compressed packets.
     """
     distinct = set(hashes.values())
     if expected_hash is not None:
@@ -63,66 +65,56 @@ def validate(
     """Run compress/round-trip/reference per (impl, dataset) and cross-impl."""
     results: list[ValidationResult] = []
     for dataset in datasets:
+        data, _ = dataset_input(dataset)
         packet_hashes: dict[str, str] = {}
         for p in prepared:
-            name = p.name
-            run_dir = workdir / name / dataset.name
+            run_dir = workdir / p.name / dataset.name
             if run_dir.exists():
                 shutil.rmtree(run_dir)
-            run_dir.mkdir(parents=True, exist_ok=True)
-            params = Params(
-                packet_bits=dataset.packet_bits, pt=dataset.pt, ft=dataset.ft,
-                rt=dataset.rt, robustness=dataset.robustness,
-            )
-            packet = run_dir / "out.pkt"
-            comp = adapter.compress(p.adapter, params, dataset.input, packet)
-            if not comp.ok:
-                results.append(
-                    ValidationResult(name, dataset.name, "compress", False,
-                                     comp.stderr.strip() or f"exit {comp.returncode}")
-                )
+            run_dir.mkdir(parents=True)
+            (run_dir / "in.rec").write_bytes(data)
+            comp = adapter.run_verb(p.adapter, "compress", run_dir / "in.rec", run_dir / "packets.rec")
+            if not comp.completed:
+                results.append(ValidationResult(p.name, dataset.name, "compress", False, comp.reason))
                 continue
-            # A non-conformant impl (e.g. a different flag schedule) gets round-trip only, so
-            # its expected divergence from the ESA reference is not reported as a failure.
-            if p.capabilities.reference_conformant:
-                packet_hashes[name] = sha256(packet)
-                if dataset.expected is not None:
-                    results.append(_reference_check(name, dataset, packet))
-            results.append(_round_trip_check(p, dataset, packet, params, run_dir))
+            packets = records.to_124(comp.output)
+            packet_hashes[p.name] = _digest(packets)
+            if dataset.expected is not None:
+                results.append(_reference_check(p.name, dataset, packets))
+            results.append(_round_trip_check(p, dataset, run_dir))
         if packet_hashes:
             results.append(_cross_impl_check(dataset, packet_hashes))
     return results
 
 
-def _reference_check(name: str, dataset: Dataset, packet: Path) -> ValidationResult:
+def _reference_check(name: str, dataset: Dataset, packets: bytes) -> ValidationResult:
     expected = dataset.expected
     if not expected.exists():
         return ValidationResult(name, dataset.name, "reference", False,
                                 f"reference missing: {expected}")
-    passed = sha256(packet) == sha256(expected)
-    detail = "" if passed else f"{packet.stat().st_size} B vs expected {expected.stat().st_size} B"
+    reference = expected.read_bytes()
+    passed = packets == reference
+    detail = "" if passed else f"{len(packets)} B vs expected {len(reference)} B"
     return ValidationResult(name, dataset.name, "reference", passed, detail)
 
 
-def _round_trip_check(
-    p: Prepared, dataset: Dataset, packet: Path, params: Params, run_dir: Path
-) -> ValidationResult:
-    depkt = run_dir / "out.depkt"
-    dec = adapter.decompress(p.adapter, params, packet, depkt)
-    if not dec.ok:
-        return ValidationResult(p.name, dataset.name, "round-trip", False,
-                                dec.stderr.strip() or f"exit {dec.returncode}")
-    passed = sha256(depkt) == sha256(dataset.input)
-    detail = "" if passed else (
-        f"{depkt.stat().st_size} B vs original {dataset.input.stat().st_size} B"
-    )
-    return ValidationResult(p.name, dataset.name, "round-trip", passed, detail)
+def _round_trip_check(p: Prepared, dataset: Dataset, run_dir: Path) -> ValidationResult:
+    dec = adapter.run_verb(p.adapter, "decompress", run_dir / "packets.rec", run_dir / "fields.rec")
+    if not dec.completed:
+        return ValidationResult(p.name, dataset.name, "round-trip", False, dec.reason)
+    failed = sum(r.kind != records.STATUS_DECODED for r in dec.output.records)
+    decoded = b"".join(r.payload for r in dec.output.records)
+    original = dataset.input.read_bytes()
+    if failed:
+        detail = f"{failed} of {len(dec.output.records)} packets not decoded"
+    elif decoded != original:
+        detail = f"{len(decoded)} B vs original {len(original)} B"
+    else:
+        detail = ""
+    return ValidationResult(p.name, dataset.name, "round-trip", not detail, detail)
 
 
 def _cross_impl_check(dataset: Dataset, packet_hashes: dict[str, str]) -> ValidationResult:
-    if not packet_hashes:
-        return ValidationResult("*", dataset.name, "cross-impl", False,
-                                "no successful compressions")
     expected_hash = sha256(dataset.expected) if dataset.expected and dataset.expected.exists() else None
     passed, detail = cross_impl_verdict(packet_hashes, expected_hash)
     return ValidationResult("*", dataset.name, "cross-impl", passed, detail)

@@ -2,15 +2,15 @@
 
 This document defines what you provide to drive an implementation with `pocketbench`.
 `pocketbench` is a harness, not a codec: each implementation is fronted by a small **adapter**, a
-wrapper executable that speaks one fixed contract over argv + stdout. pocketbench core owns dataset
-staging, warmup/iteration counts, all metric derivation, aggregation, reporting, and conformance
-grading; the adapter owns mapping the uniform parameter set to the codec's real API and running the
-codec.
+wrapper executable that speaks one fixed contract over argv + stdout. pocketbench core owns
+everything that is not the codec: dataset kinds, the pt/ft/rt flag schedule, re-framing the
+yellow-book formats, warmup/iteration counts, comparison, all metric derivation and reporting. The
+adapter owns mapping each packet onto the codec's real API.
 
-Everything between those two (subcommand dispatch, flag parsing, file IO, output buffer sizing,
-`packets_per_iter`, the warmup+timed loop, the JSON payloads) is **shared plumbing**, held once per
-language under `adapters/common/`. An adapter written against it supplies only codec calls plus its
-declarative capability facts, so a change to this contract is edited in the shared plumbing rather
+Everything between those two (subcommand dispatch, flag parsing, the record container, output
+buffer sizing, the warmup+timed loop, the summary JSON) is **shared plumbing**, held once per
+language under `adapters/common/`. An adapter written against it supplies only per-packet codec
+hooks plus two report strings, so a change to this contract is edited in the shared plumbing rather
 than in every adapter. See "The shared plumbing" below.
 
 You add an implementation by dropping a folder under `adapters/<name>/` with an `adapter.toml`
@@ -23,8 +23,8 @@ central `[implementations.*]` config model no longer exists.
 pocketbench/
   adapters/            # committed; one folder per impl. The only place a codec is named.
     common/            # NOT an adapter (no adapter.toml, so discovery skips it): shared plumbing
-      c/               #   adapter_common.{h,c}   - used by reference-c and reference-cpp
-      rust/            #   pocketbench-adapter/   - used by reference-rust and pocketrust
+      c/               #   adapter_common.{h,c}   - used by reference-c, reference-cpp, pocketplus
+      rust/            #   pocketbench-adapter/   - used by pocketrust-u32, pocketrust-u64
     mock/              # self-contained identity codec: the worked example for an interpreted impl
       adapter.toml
       adapter.py
@@ -32,14 +32,17 @@ pocketbench/
       adapter.toml
       Makefile
       src/adapter.c
-    reference-rust/    # Cargo wrapper depending on the codec crate
-    pocketrust/
+    pocketrust/        # NOT an adapter (no adapter.toml): the crate both pocketrust-* adapters build
+    pocketrust-u32/    # adapter.toml only: builds ../pocketrust with --features block32
+    pocketrust-u64/    # adapter.toml only: builds ../pocketrust with --features block64
+    pocketplus/        # C wrapper over the Stainless GenC output and its pp_* shim
 ```
 
 Only the adapters are committed, and the codecs live entirely outside this repo so that no second
 git repository is ever nested inside it: the ccsds124 checkout, reached via `${ccsds124_root}`
-(`reference-c`, `reference-cpp`, `reference-rust`, and the `reference-*` datasets), and
-`pocketrust`, the sibling folder `../pocketrust` of the enclosing pocket-plus repo. An adapter's
+(`reference-c`, `reference-cpp`, and the `reference-*` datasets), and
+`pocketrust` and `pocketplus`, the sibling folders `../pocketrust` and `../pocketplus` of the
+enclosing pocket-plus repo. An adapter's
 `source` is the single place that says where its codec is.
 
 ## The manifest: `adapters/<name>/adapter.toml`
@@ -55,6 +58,7 @@ build       = "make SOURCE={source} MAX_PACKET_BITS={max_packet_bits}"   # omit 
 entrypoint  = "build/adapter"                            # contract executable, relative to the adapter dir
 interpreter = "python"                                   # optional: run `python <entrypoint>` (e.g. the mock)
 version_cmd = "gcc --version"                            # optional: toolchain string for reports
+skip_commands = ["bench"]                                # optional: commands that leave it out
 ```
 
 - **`source`** resolves two ways: a `${var}` expanded from `[settings]` in `config.toml` (e.g.
@@ -69,146 +73,87 @@ version_cmd = "gcc --version"                            # optional: toolchain s
 - **`entrypoint`** is the contract executable relative to the adapter dir. With `interpreter` set,
   pocketbench runs `<interpreter> <entrypoint> <subcommand> ...` (useful when the exec bit does not
   stick, e.g. on the `/mnt/c` NTFS filesystem).
+- **`skip_commands`** (any of `build`, `validate`, `bench`, `profile`, `conformance`, `explain`,
+  `sweep`)
+  leaves the adapter out of those commands' default selection and of `--impl` globs, e.g. a
+  decoder-only implementation that `bench` cannot time. Naming it with `--impl <name>` still runs
+  it. It never filters codec input; it only decides which impls a command runs by default.
 
 ## The contract
 
-The entrypoint responds to six subcommands. Everything after the subcommand is a **keyed
-`--key=value` flag**, in any order. `packet-bits` is **F (large_f), the packet field width in bits**
-(CCSDS 124.0-B-1 allows `1..=65535`); each packet occupies a byte-padded stride of `ceil(F/8)` bytes
-in the input/output files (meaningful bits high, padding bits low), so the adapter derives the byte
-stride from F. For a byte-aligned dataset `F = packet_length_bytes * 8` and the stride is `F/8`.
-pocketbench always passes explicit absolute input and output paths. Exit non-zero on failure. An
-impl whose codec API is byte-aligned only (e.g. reference-rust's public whole-buffer API,
-reference-cpp's compile-time template) must reject a sub-byte F cleanly rather than mishandle it,
-and should say so in `capabilities.limitations`.
+The entrypoint responds to three subcommands. Everything after the subcommand is a **keyed
+`--key=value` flag**, in any order, and pocketbench always passes absolute paths.
 
-### Flags are keyed, and parsing is strict
-
-An adapter **must exit 2** on an argv it cannot honor exactly:
-
-| Case | Why it must fail |
+| Subcommand | Purpose |
 |---|---|
-| an unknown flag | the harness passes a parameter this adapter does not implement |
-| a missing required flag | the harness has dropped or renamed a parameter |
-| a value that does not parse completely | e.g. `--pt=abc`, or a negative count |
-| a positional argument | the pre-keyed argv shape, from a harness older than the adapter |
+| `capabilities` | print `{"build_profile": "...", "limitations": "..."}`: report text, gating nothing |
+| `compress --in= --out= [--warmup= --iterations=]` | compress a record container to exactly `--out` |
+| `decompress --in= --out= [--warmup= --iterations=]` | decompress a record container to exactly `--out` |
 
-Strictness is what keeps a harness/adapter mismatch from becoming quiet bad data: a mismatch is a
-named error before any codec runs, rather than a run that used a parameter the adapter misread.
-There is deliberately no contract version number, so strictness is the only drift detector and an
-adapter must never ignore a flag it does not recognize.
+Every command uses these two verbs: bench adds `--warmup` / `--iterations`, validate, profile,
+conformance and explain do not. **Parsing is strict**: an unknown, duplicated or unparseable flag, a
+missing `--in` / `--out`, any positional argument, or a malformed container exits 2, so a harness
+that has moved on from what an adapter implements fails loudly.
 
-`tests/adapter_contract.py` asserts all four cases for every adapter, so an adapter that has not
-caught up with a contract change fails by name.
-
-### `capabilities`
-
-Print a single JSON object to stdout and exit 0:
-
-```json
-{
-  "ops": ["compress", "decompress"],
-  "timing_tier": "in_process",
-  "reference_conformant": true,
-  "conformance_compress": true,
-  "conformance_decompress": true,
-  "param_schedule": "pt_ft_rt"
-}
-```
-
-`build_profile` and `limitations` are optional (default `""`); the mock omits both. An adapter built
-on the shared plumbing does not write this JSON itself: it declares only the descriptive fields, and
-`ops` / `conformance_compress` / `conformance_decompress` are **derived** from which codec hooks it
-actually provided, so the report cannot claim support that is not implemented.
-
-| Field | Meaning |
-|---|---|
-| `ops` | which of `compress` / `decompress` the impl supports (subset of those two) |
-| `timing_tier` | `"in_process"` (wrapper runs the loop; clean numbers) or `"subprocess"` (wrapper can only spawn a whole-file CLI per iteration; tagged so it is never compared against in-process rows) |
-| `reference_conformant` | `true` if compressed output is byte-identical to the ESA reference; `false` gates `validate` down to round-trip only |
-| `conformance_compress` / `conformance_decompress` | whether the impl runs the encoder / decoder conformance phase |
-| `param_schedule` | free label for how the impl uses the params (e.g. `"pt_ft_rt"`, `"init_incremental"`, `"identity"`) |
-
-### `compress` / `decompress`
+### The record container
 
 ```
-compress   --in=<path> --out=<path> --packet-bits=F --pt=N --ft=N --rt=N --robustness=N
-decompress --in=<path> --out=<path> --packet-bits=F --pt=N --ft=N --rt=N --robustness=N
+header:  F        u32 BE   (decompress input: 0 = unknown, the codec discovers it)
+record:  kind     u8
+         bits     u32 BE   declared length in bits
+         payload  ceil(bits/8) bytes, or fewer when the stream ends first
 ```
 
-Read `--in`, run the op, write the result to **exactly** `--out` (no discover-by-extension: core
-names the path). Map the uniform param set to the codec's real API; ignore any params the codec
-does not use (the mock identity codec, for instance, ignores `pt/ft/rt` and `robustness`
-entirely). Round-trip `decompress(compress(x)) == x` must hold for the impl's own format.
+| Stream | Records | `kind` | `bits` | payload |
+|---|---|---|---|---|
+| compress in | first: initial mask M_0 | 0 | F | the mask bytes as given |
+| | then one per packet | the yellow-book flag byte (bit 7 reserved, f, p, r, R) | F | the field bytes as given |
+| compress out | one per packet | 0 | packet length | the packet, zero-padded to a byte |
+| decompress in | one per element | 0 received, 1 lost | declared length | the bytes present |
+| decompress out | one per element | 0x00 decoded, 0x01 failed, 0x02 lost | F if decoded, else 0 | the decoded field |
 
-### `bench`
+The decompress output header carries the decoder's trailer F. A compress output is a valid
+decompress input as it stands.
 
-```
-bench --op=compress|decompress --in=<path> --warmup=N --iterations=N \
-      --packet-bits=F --pt=N --ft=N --rt=N --robustness=N
-```
+### The summary
 
-Load `--in` once, run `--op` `--warmup` times untimed and `--iterations` times timed, and print the
-raw per-iteration nanoseconds as JSON:
+stdout is one JSON object: `records_in`, `records_out`, `stopped_at` (null, or the index of the
+record whose hook failed; 0 for a failed create), `error` (null, `input not representable by this
+codec's API`, `codec error <code>` or `output buffer exhausted`), and `nanos` (the per-iteration
+nanoseconds) if and only if `--iterations` was given. The output file holds everything produced
+before a stop. A decompress hook may stop the stream too (a negative return in C, an `Err` in
+Rust, an exception in the mock); the output then holds the records before it and the trailer F. Exit 0 when the container was read (a codec rejection is a result), 1 on an IO error
+or an exhausted output buffer, 2 on a contract violation.
 
-```json
-{"op": "compress", "iterations": 100, "packets_per_iter": 100, "nanos": [1234, 1250, ...]}
-```
+### No filtering
 
-Time exactly what a real user pays per call (include any per-call setup the codec does, matching the
-codec's own bench). Do **not** pre-summarize: core computes the median and derives every metric, so
-all impls are comparable and percentiles stay available. `packets_per_iter` is the packet count of
-the input (`len(input) / ceil(packet_bits / 8)`). For a decompress bench, compress the input once up front
-(outside the timer) and time decompressing that. The shared plumbing does all of this, including
-allocating the output buffer once up front so a timed iteration allocates nothing.
-
-### `conformance-compress` / `conformance-decompress`
-
-```
-conformance-compress   --in=<in.raw+config> --out=<out.124>
-conformance-decompress --in=<in.124+config> --out=<out.raw+large_f>
-```
-
-Optional (reported via `capabilities`). Read one self-describing UAB/CNES vector, write the byte-
-exact result to `<out>`, exit 0. pocketbench compares `<out>`'s size + SHA-256 to the manifest. If
-`capabilities` reports the phase unsupported, pocketbench never calls that verb and notes it as
-skipped.
+Neither core, the shared plumbing nor an adapter filters, validates or pre-checks input: every
+value that parses is handed to the codec. The only adapter-side refusal is "input not representable
+by this codec's API", returned without calling the codec when its API cannot take the input (a value
+its types cannot hold, a field of the wrong length). A codec without a concept (packet loss, unknown
+F) implements the hook honestly and fails the cases that need it.
 
 ## The shared plumbing
 
-`adapters/common/` is not an adapter (it has no `adapter.toml`, so discovery skips it). It holds one
-implementation of the contract per language, and the compiled adapters are written against it:
+`adapters/common/` is not an adapter (it has no `adapter.toml`, so discovery skips it). It holds the
+contract once per language, and the compiled adapters supply only per-packet hooks:
 
 | | Used by | Adapter supplies |
 |---|---|---|
-| `common/c/adapter_common.{h,c}` | reference-c, reference-cpp | a `pb_adapter` struct: declarative `pb_caps` + up to four hooks |
-| `common/rust/pocketbench-adapter/` | reference-rust, pocketrust | an `impl Adapter`: `caps()` + two codec methods + optional conformance hooks |
+| `common/c/adapter_common.{h,c}` | reference-c, reference-cpp, pocketplus | a `pb_adapter`: two report strings + `enc_create` / `enc_packet` / `enc_destroy` / `dec_create` / `dec_packet` / `dec_lost` / `dec_trailer_f` / `dec_destroy` |
+| `common/rust/pocketbench-adapter/` | pocketrust-u32, pocketrust-u64 | an `impl Codec` with the same hooks |
 
-Both own: subcommand dispatch, keyed-flag parsing and validation (including F's `1..=65535` range),
-file IO, output buffer sizing, `packets_per_iter`, the warmup+timed loop, and the `capabilities` and
-raw-nanos JSON. Both derive `ops` and the two `conformance_*` flags from which hooks exist.
-
-The C header is `extern "C"`-guarded and `adapter_common.c` is always compiled as C, so the C++
-adapter links the same object; its templated `compress<N>` dispatch happens inside its own hooks.
-
-What that leaves in an adapter is codec-specific only: reference-rust is 55 lines and
-reference-cpp 90. reference-c (436) and pocketrust (384) are longer because each carries its two UAB
-conformance drivers, ported verbatim from that codec's own crossvalidation harness.
-
-**Timing.** The hook is reached through a function pointer (C) or a trait object (Rust), so the
-codec call is not inlined into the loop. Measured cost of the whole shared loop with a no-op hook:
-**38 ns per iteration**, nearly all of it the two `clock_gettime` calls. A real iteration on the
-smallest reference dataset is 20,000-100,000 ns, so the loop contributes under 0.05%. The output
-buffer is allocated once up front, not per iteration.
-
-An adapter does not have to use the shared plumbing; `adapters/mock/` speaks the contract directly
-in Python. The contract is the process interface, and nothing in core knows which route an adapter
-took.
+The plumbing owns flag parsing, the container, the warmup + timed loop (per iteration: create,
+every packet, destroy), output sizing and the summary. `adapters/mock/adapter.py` is the third,
+Python, copy; `tests/test_plumbing.py` runs the same behaviours against all three through identity
+fixtures (`tests/fixtures/adapters/{c,rust}-identity`), so the copies cannot drift.
 
 ## Discovery and the two presence gates
 
-Discovery is a pure folder scan of `adapters/*/adapter.toml`. Presence is checked at the two phases
-where it matters:
+Discovery is a pure folder scan of `adapters/*/adapter.toml`. `[settings] local_adapters_dir`
+(optional, machine-local) names a second folder scanned the same way, for adapters that must stay
+outside the repository; an adapter name defined in both is a configuration error. Presence is
+checked at the two phases where it matters:
 
 - **Gate 1 (source present), at build.** If `source` resolves to a missing/empty path, the build is
   skipped and the impl is unavailable. Self-contained adapters (no `source`) pass trivially.
@@ -226,22 +171,26 @@ The ccsds124 C codec's max packet length is a compile-time macro that sizes a pe
 memsets on every packet. `bench` wants it small (the dataset size; the default 65535 bits inflates
 the buffer to ~96 KB and slows compression ~5x); `validate` / `profile` / `conformance` need the
 full 65535 for the UAB `large_f` vectors. So the C adapter's `build` keeps a `{max_packet_bits}`
-substitution and pocketbench builds the right variant per command
-(`max(dataset packet_bits)`, floored at 720, for bench; the codec default otherwise). Because `make` ignores a
-flag-only change, the reference-c Makefile forces a recompile (a `FORCE` prerequisite) so the size
-always takes effect. Non-C adapters ignore the placeholder.
+substitution, and an adapter whose `build` takes it is **size-specialized** (derived from the
+manifest, so it cannot drift). `bench` groups the selected datasets by the size they need (each
+dataset's F, floored at 720) and rebuilds every size-specialized adapter once per group, timing each
+group on a build sized for it; every other adapter is built once. The report says so explicitly:
+the build-settings section lists one build per size and explains that this is a compile-time
+advantage the run-time-sized impls do not take, and each result row names the build it ran on
+(`reference-c (built for F ≤ 720)`). `validate` / `profile` / `conformance` build the codec default;
+a standalone `build` sizes to the largest F of all datasets. Because `make` ignores a flag-only
+change, the reference-c Makefile forces a recompile (a `FORCE` prerequisite) so the size always
+takes effect. With `--no-build` nothing is rebuilt, so the report states the size as unknown
+("as last built") rather than claiming one.
 
 ## Worked examples
 
-**A compiled adapter: start from the shared plumbing.** `adapters/reference-rust/src/main.rs` (55
-lines) and `adapters/reference-cpp/src/adapter.cpp` (90 lines) are the shortest complete adapters
-and the shape to copy: declare the capability facts, implement the codec calls, hand the rest to
-`pocketbench_adapter::run` / `pb_main`.
+**A compiled adapter: start from the shared plumbing.** `adapters/reference-cpp/src/adapter.cpp`
+and `adapters/pocketplus/src/adapter.c` are the shapes to copy: two report strings and the
+per-packet hooks, everything else in `pb_main` / `pocketbench_adapter::run`.
 
 **An interpreted adapter: `adapters/mock/`.** The self-contained example the unit tests drive (so
-the suite needs no C/Rust build), and the reference for what the contract looks like without the
-shared plumbing: it parses the keyed flags itself, with the same strictness. Its manifest omits
-`source`/`build`:
+the suite needs no C/Rust build). Its manifest omits `source`/`build`:
 
 ```toml
 name        = "mock"
@@ -250,11 +199,8 @@ interpreter = "python"
 entrypoint  = "adapter.py"
 ```
 
-`adapters/mock/adapter.py` implements the whole contract: `compress`/`decompress` copy bytes
-(identity, so round-trip is exact), `conformance-*` echo, `capabilities` prints canned JSON (omitting
-the optional `build_profile`/`limitations`, so it also exercises core's defaults), and `bench` runs a
-real in-process warmup+timed loop over a trivial op and prints the raw-nanos payload. Its `_flags`
-helper is the minimum strict parser the contract requires.
+`adapters/mock/adapter.py` is an identity codec plus the Python copy of the plumbing: the same
+strict flags, container, timed loop and summary as the C and Rust copies.
 
 ## Adding an implementation (step by step)
 
@@ -268,13 +214,10 @@ helper is the minimum strict parser the contract requires.
    `${var}` or relative codec path, or omit if self-contained), `build` (with `{source}` /
    `{max_packet_bits}` as needed, or omit), `entrypoint`, and optional `interpreter` / `version_cmd`.
 4. **Implement the entrypoint.** In C, C++ or Rust, build it on the shared plumbing
-   (`adapters/common/`): supply the capability facts plus the codec hooks and let it own the
-   contract, so the six subcommands, the strict flag parsing and the timed loop come for free and a
-   later contract change reaches you through it. In any other language, implement the six
-   subcommands directly, following `adapters/mock/adapter.py` (strict keyed flags included). Either
-   way, reuse the codec's own library entry points; only fall back to spawning a whole-file CLI (and
-   reporting `timing_tier = "subprocess"`) if the codec truly cannot be linked, and report exactly
-   what the impl supports so the commands gate themselves.
+   (`adapters/common/`) and supply only the per-packet hooks. In any other language, copy the
+   plumbing half of `adapters/mock/adapter.py`, add the language to `tests/test_plumbing.py` with an
+   identity fixture, and supply the hooks. Map the hooks onto the codec's own library entry points
+   and never add input checks of your own.
 5. **Build and smoke-test:**
    ```bash
    uv run pocket-bench build --impl <name>
@@ -284,8 +227,9 @@ helper is the minimum strict parser the contract requires.
    Naming the impl with `--impl` makes an unavailable impl a hard error (not a silent skip), so a
    missing codec or a broken build surfaces immediately.
 6. **Add a row to `ADAPTERS` in `tests/test_adapters.py`** naming what is impl-specific about it
-   (conformance support, sub-byte F, the `build_profile`/`limitations` substrings). The whole
-   parametrized suite, including `assert_adapter_conforms` and the strict-argv checks, then covers
+   (sub-byte F, an unsupported size, whether its output matches the two UAB vectors, the
+   `build_profile`/`limitations` substrings). The whole parametrized suite, including
+   `assert_rejects_contract_violations`, then covers
    it, and it skips rather than fails when the codec is absent. No framework code changes are needed
    to wire in the impl itself.
 

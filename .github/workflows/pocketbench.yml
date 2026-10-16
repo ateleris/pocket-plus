@@ -52,8 +52,9 @@ jobs:
       # No ccsds124 checkout in this job, so everything that needs it skips rather than fails: the
       # reference-* adapters resolve their `source` under ${ccsds124_root}, and the reference
       # datasets come from the same place. The mock contract tests and pocketrust still run.
+      # pocketplus needs Java + Stainless to generate its gitignored GenC source; not installed here.
       - name: Run framework tests
-        run: uv run python -m pytest
+        run: uv run python -m pytest -k "not pocketplus"
 
   integration:
     name: integration (build + validate, all real impls)
@@ -68,7 +69,7 @@ jobs:
       # `path` is relative to the workspace root, not to defaults.working-directory. One checkout
       # backs both the reference adapters (${ccsds124_root}/implementations/<lang>) and the
       # reference datasets (${ccsds124_root}/test-vectors); config/ci.toml points the variable here.
-      - name: Checkout ccsds124 (reference-c / reference-cpp / reference-rust)
+      - name: Checkout ccsds124 (reference-c / reference-cpp)
         uses: actions/checkout@v4
         with:
           repository: ${{ env.CCSDS124_REPO }}
@@ -92,12 +93,13 @@ jobs:
       - name: Sync dependencies
         run: uv sync
 
-      - name: Build all adapters
+      # Every adapter except pocketplus, for the reason given in the unit job.
+      - name: Build adapters
         run: uv run pocket-bench build -c config/ci.toml
+             --impl reference-c --impl reference-cpp --impl pocketrust-u32 --impl pocketrust-u64
 
       # Split by capability so the gate is one every impl can meet: reference-cpp (compile-time
-      # SUPPORTED_SIZES) and reference-rust (byte-aligned public API) reject the sub-byte-F
-      # datasets, which the unit job asserts per-impl instead.
+      # SUPPORTED_SIZES) rejects the sub-byte-F datasets, which the unit job asserts instead.
       #
       # These build rather than reusing the step above, which sizes reference-c's compile-time
       # CCSDS124_MAX_PACKET_LENGTH for bench where validate needs the codec default.
@@ -105,8 +107,8 @@ jobs:
         run: uv run pocket-bench validate -c config/ci.toml
              --impl reference-c --impl pocketrust-u32 --impl pocketrust-u64
 
-      - name: Validate reference-cpp + reference-rust (byte-aligned vectors)
+      - name: Validate reference-cpp (byte-aligned vectors)
         run: uv run pocket-bench validate -c config/ci.toml
-             --impl reference-cpp --impl reference-rust
+             --impl reference-cpp
              --dataset reference-simple --dataset reference-hiro --dataset reference-edge-cases
              --dataset reference-housekeeping --dataset reference-venus-express

@@ -49,3 +49,36 @@ def test_profile_mock_end_to_end(tmp_path):
     # Identity codec: compressed output equals input, ratio ~ 1.0.
     assert ops["compress"].output_bytes == 900
     assert ops["compress"].peak_rss_bytes > 0
+
+
+def _scripted_prepared(tmp_path, body):
+    from tests.conftest import scripted_adapter
+
+    return Prepared(adapter=scripted_adapter(tmp_path, body), capabilities=adapter.Capabilities())
+
+
+def _tiny_dataset(tmp_path):
+    inp = tmp_path / "in.bin"
+    inp.write_bytes(b"XY")
+    return Dataset(name="d", input=inp, expected=None, packet_bits=16, pt=0, ft=0, rt=0, robustness=0)
+
+
+def test_profile_reports_a_garbled_summary_as_runtime_error(tmp_path):
+    if not profiling.time_available():
+        pytest.skip("/usr/bin/time not available")
+    p = _scripted_prepared(
+        tmp_path,
+        "out = next(a[6:] for a in sys.argv if a.startswith('--out='))\n"
+        "Path(out).write_bytes(b'\\x00\\x00\\x00\\x10')\n"
+        "print('not json')",
+    )
+    with pytest.raises(RuntimeError, match="no summary"):
+        profiling.profile(p, _tiny_dataset(tmp_path), tmp_path / "wd", runs=1)
+
+
+def test_profile_reports_a_hang_as_runtime_error(tmp_path):
+    if not profiling.time_available():
+        pytest.skip("/usr/bin/time not available")
+    p = _scripted_prepared(tmp_path, "time.sleep(30)")
+    with pytest.raises(RuntimeError, match="timed out"):
+        profiling.profile(p, _tiny_dataset(tmp_path), tmp_path / "wd", runs=1, timeout=1)
