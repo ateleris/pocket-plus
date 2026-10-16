@@ -1,0 +1,300 @@
+title pocket-bench bench --impl pocketrust --dataset reference-housekeeping
+
+actor "User" as user
+
+participantgroup #lightblue **Python: pocketbench core**
+participant "cli.py\nbench()" as cli
+participant "api.py\nPocketBench" as api
+participant "config.py\nConfig" as cfg
+participant "orchestrate.py" as orch
+participant "records.py\nschedule.py" as rec
+participant "adapter/driver.py" as drv
+participant "benchmark.py" as bm
+participant "report.py" as rep
+end
+
+participantgroup #lightyellow **Subprocesses**
+participant "cargo" as cargo
+end
+
+participantgroup #moccasin **Rust process: adapters/pocketrust/target/release/adapter**
+participant "pocketbench_adapter\n(adapters/common/rust/lib.rs)" as plumb
+participant "adapters/pocketrust\nmain.rs: impl Codec" as adp
+end
+
+participantgroup #lightgreen **Rust: pocketrust crate (the codec)**
+participant "CompressorContext" as enc
+participant "DecompressorContext\n+ check_frame" as dec
+end
+
+user->cli: uv run pocket-bench bench --impl pocketrust\n--dataset reference-housekeeping --warmup 10 --iterations 100
+
+== Setup ==
+
+cli->api: _load(config) => PocketBench(config, on_progress, on_message)
+api->cfg: load_config(path)
+note over cfg: discovers adapters/*/adapter.toml\nand datasets/*/dataset.toml
+alt config file missing or load raises
+api-->cli: raise ConfigError
+cli-->user: print red, exit 2
+end
+cfg-->api: Config
+cli->cli: _show_selection(pb, impl, dataset)
+cli->api: pb.bench(impl, dataset, warmup, iterations, build=True)
+
+alt iterations < 1
+api-->cli: raise PocketBenchError
+cli-->user: print red, exit 2
+end
+
+api->cfg: _select_datasets() => select_datasets(names)
+alt unknown dataset name (KeyError)
+api-->cli: raise SelectionError (a PocketBenchError)
+cli-->user: print red, exit 2
+end
+cfg-->api: list[Dataset]
+api->api: group datasets by _build_size(ds) = max(F, 720)
+
+api->cfg: _select_impls() => select_impls(["pocketrust"])
+alt unknown impl name (KeyError)
+api-->cli: raise SelectionError
+cli-->user: print red, exit 2
+end
+cfg-->api: [DiscoveredAdapter pocketrust]
+
+api->orch: _prepare() => prepare_impls(adapters, explicit=True,\nbuild=True, max_packet_bits=sizes[0])
+
+== Gate 1 (build) or Gate 2 (entrypoint) ==
+
+alt build=True
+orch->drv: build(d, max_packet_bits)
+alt source_present(d) is False (../pocketrust missing)
+drv-->orch: AdapterRunResult(ok=False, "implementation not found at ...")
+else source present
+drv->cargo: subprocess.run("cargo build --release", cwd=adapters/pocketrust)
+note over cargo: compiles pocketbench-adapter + pocketrust\n(pocketrust ignores max_packet_bits)
+cargo-->drv: returncode, stderr
+drv-->orch: AdapterRunResult(ok = returncode == 0)
+end
+else --no-build
+orch->orch: entrypoint_present(d)?
+end
+
+alt build failed or entrypoint missing
+alt explicit (--impl given)
+orch-->api: raise ImplUnavailable
+api-->cli: (propagates)
+cli-->user: print red, exit 1
+else impl was not named
+orch->api: on_message("pocketrust: reason"), impl skipped
+end
+end
+
+orch->drv: capabilities(d)
+drv->plumb: subprocess: adapter capabilities
+plumb->adp: Pocketrust.caps()
+adp-->plumb: Caps{build_profile, limitations}
+plumb-->drv: stdout JSON, exit 0
+alt returncode != 0
+drv-->orch: raise RuntimeError("capabilities failed")
+note over cli: not caught by cli.bench:\nends in a Python traceback
+end
+drv-->orch: Capabilities
+orch-->api: [Prepared(adapter, capabilities)]
+
+== Per impl ==
+
+note over api: pocketrust is not size_specialized:\nno per-size rebuild loop
+api->orch: build_info(p, None)
+orch->drv: version(d)
+drv->cargo: subprocess: cargo --version
+cargo-->drv: first line (or "unknown" on OSError/timeout)
+orch-->api: BuildInfo
+
+loop each selected dataset ds
+api->orch: bench_metrics(p, ds, warmup, iterations)
+
+orch->orch: dataset_input(ds): read ds.input bytes
+orch->rec: payload_bytes(F), count = ceil(len / stride)
+orch->rec: schedule.flags(count, pt, ft, rt, robustness)
+rec-->orch: flag byte per packet (send/new/uncompressed/R)
+orch->rec: from_fields(F, data, flags)
+note over rec: record 0 = all-zero initial mask,\nthen one record per field with its flag byte
+orch->rec: encode(container)
+rec-->orch: bytes
+orch->orch: write TemporaryDirectory/in.rec
+
+loop verb in (compress: in.rec to packets.rec), (decompress: packets.rec to fields.rec)
+orch->drv: bench(d, verb, src, dst, warmup, iterations, packets=count)
+drv->drv: run_verb() => unlink(dst), verb_argv(d, verb, ...)
+drv->plumb: subprocess.run(adapter VERB --in=src --out=dst\n--warmup=10 --iterations=100, timeout=1800)
+
+plumb->plumb: main() => pocketbench_adapter::run(&Pocketrust)
+plumb->plumb: dispatch argv[1] => cmd_verb(c, args, is_compress)
+plumb->plumb: parse_args(): set_path / set_count
+alt positional arg, unknown flag, duplicate flag, bad integer, missing --in/--out
+plumb-->drv: eprintln(msg), exit 2 (contract violation)
+end
+plumb->plumb: fs::read(--in)
+alt read fails
+plumb-->drv: exit 1 (runtime error)
+end
+plumb->plumb: parse_container(): F header + Record{kind, bits, data}
+alt record header cut off
+plumb-->drv: exit 2 (malformed record container)
+end
+plumb->plumb: allocate one output buffer (reused by every pass)
+
+alt verb = compress
+loop warmup (10x), then timed (100x): t0 = Instant::now()
+plumb->plumb: compress_pass(c, input, out): write F header
+plumb->adp: enc_create(f, records.first())
+alt F missing or > u16, or mask length != ceil(F/8)
+adp-->plumb: Err(HookError::NotRepresentable)
+end
+adp->enc: CompressorContext::init(f)
+adp->adp: pack_be_into(mask bytes => [u64] BE words)
+adp->enc: set_initial_mask(&words)
+alt bits set past F
+enc-->adp: Err(CompressError::PaddingNotZero)
+adp-->plumb: Err(HookError::Codec("bits after the F-bit field are set"))
+end
+adp-->plumb: Ok(Enc{ctx, scratch, field, packet, stride})
+alt enc_create returned Err
+plumb->plumb: pass.stopped_at = 0, pass.error = e, return
+end
+
+loop each record i >= 1
+plumb->plumb: room(out, ...) grows buffer if needed
+plumb->adp: enc_packet(state, flag=rec.kind, field, out)
+alt field.len() != stride
+adp-->plumb: Err(NotRepresentable)
+end
+adp->adp: pack_be_into(field)
+adp->enc: compress(field, R=flag&0x0F, new_mask=0x20,\nsend_mask=0x40, uncompressed=0x10, packet, 0, 0, scratch)
+alt R outside 0..=7
+enc-->adp: Err(RobustnessOutOfRange)
+else t <= R without uncompressed/send-mask (3.3.2)
+enc-->adp: Err(InitPhaseFlags{t, R})
+else bits set past F
+enc-->adp: Err(PaddingNotZero)
+end
+enc->enc: update mask/build vector, reverse_rle,\ncount, be, BitWriter::add_bits
+enc-->adp: Ok((pos, idx))
+adp->adp: bits = pos*64 + idx
+alt bytes > out.len()
+adp-->plumb: Err(HookError::OutputFull)
+end
+adp->adp: unpack_be(packet => out), clear used packet words
+adp-->plumb: Ok(bits)
+alt Ok(bits)
+plumb->plumb: write record header (kind 0, bits), records_out += 1
+else Err(e)
+plumb->plumb: stopped_at = i, error = e, break
+end
+end
+note over plumb: Enc dropped at end of pass
+plumb->plumb: nanos.push(t0.elapsed()) (timed passes only);\nbreak timed loop if stopped
+end
+
+else verb = decompress
+loop warmup (10x), then timed (100x): t0 = Instant::now()
+plumb->plumb: decompress_pass(c, input, out): zero F header
+plumb->adp: dec_create(f = header F of packets.rec, records)
+alt F > u16
+adp-->plumb: Err(NotRepresentable)
+end
+adp->dec: DecompressorContext::init_f_known(F)\n(init() when F = 0, i.e. unknown)
+adp-->plumb: Ok(Dec{ctx, scratch, words, field})
+
+loop each record i
+alt rec.kind & 1 (lost; never in bench input)
+plumb->adp: dec_lost(state)
+adp->dec: notify_packet_loss(1) if discovered_f() is Some
+plumb->plumb: status LOST
+else received
+plumb->adp: dec_packet(state, data, declared=rec.bits,\navail=min(bits, 8*len), out)
+adp->dec: check_frame(declared, data.len()*8)
+alt 0 bits, > MAX_COMPRESSED_PACKET_BITS, or truncated
+dec-->adp: Err(FrameError)
+adp-->plumb: Err(HookError::Codec(...))
+plumb->plumb: stopped_at = i, error = e, break
+end
+adp->adp: pack_be_into(data => words)
+adp->dec: decompress(words, 0, 0, avail, field, scratch)
+dec->dec: decompress_internal (BitReader try_read*,\ntry_read_reverse_rle, invert_mask_shift),\nvt_gap_ok, push_status
+alt Guaranteed
+dec-->adp: (Guaranteed, pos, idx)
+adp->dec: discovered_f().expect(...)
+adp->adp: unpack_be(field => out)
+adp-->plumb: Ok((DECODED, F))
+else Unguaranteed
+dec-->adp: (Unguaranteed, ...)
+adp-->plumb: Ok((FAILED, 0))
+note over plumb: FAILED does not stop the pass,\nso bench still "completes"
+end
+end
+plumb->plumb: write record header (status, bits)
+end
+plumb->adp: dec_trailer_f(state)
+adp->dec: discovered_f()
+plumb->plumb: write trailer F into header
+plumb->plumb: nanos.push(t0.elapsed()); break if stopped
+end
+end
+
+plumb->plumb: fs::write(--out)
+alt write fails
+plumb-->drv: exit 1
+end
+plumb-->drv: println summary JSON\n{records_in, records_out, stopped_at, error, nanos}
+alt pass.error = OutputFull
+plumb-->drv: exit 1 ("output buffer exhausted")
+else panic anywhere in adapter or codec
+plumb-->drv: exit 101, panic message on stderr
+else
+plumb-->drv: exit 0 (also when a hook error stopped the pass)
+end
+
+alt TimeoutExpired
+drv->drv: VerbRun(returncode=None) => reason "timeout"
+end
+drv->drv: json.loads(stdout) => summary (None if not JSON)
+drv->rec: decode(dst bytes) => Container
+alt ValueError (malformed output)
+drv->drv: output_error = str(exc)
+end
+drv->drv: VerbRun(returncode, stderr, summary, output)
+
+alt not run.completed (exit != 0, no output, no summary, or stopped_at set)
+drv-->orch: raise RuntimeError("pocketrust: bench VERB failed (reason)")
+orch-->api: (propagates out of bench_metrics)
+api->cli: on_message("pocketrust/DATASET: ..."), skip this dataset
+note over api: dataset dropped entirely,\neven if compress succeeded
+end
+drv-->orch: BenchPayload(op, iterations, packets_per_iter, nanos)
+orch->drv: to_metrics(payload, impl, vector, packet_bits)
+drv->drv: statistics.median(nanos) / 1000 => us/iter
+drv->bm: derive(BenchRecord, packet_bits)
+bm-->drv: BenchMetrics (us/pkt, packets/s, MB/s in MiB)
+drv-->orch: BenchMetrics
+end
+orch-->api: [compress metrics, decompress metrics]
+api->api: metrics.extend(replace(m, build_packet_bits=None))
+end
+
+api->rep: collect_environment()
+api-->cli: BenchRun(metrics, build_infos, environment, iterations)
+
+== Report ==
+
+alt run.metrics empty
+cli-->user: "No benchmark results ...", exit 1
+end
+cli->rep: benchmark_tables(run.metrics)
+cli->rep: build_settings_table(run.build_infos)
+cli->api: pb.write_report(run)
+api->rep: write_benchmark_markdown(...) => results/benchmark.md
+api->rep: write_json(...) => results/benchmark.json
+api-->cli: [md, json paths]
+cli-->user: tables + "Wrote ...", exit 0

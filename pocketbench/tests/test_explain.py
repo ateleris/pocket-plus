@@ -360,14 +360,14 @@ def _suite(tmp_path):
 def test_resolve_accepts_stem_and_either_extension(tmp_path, name):
     v = resolve_vector(_suite(tmp_path), name)
     assert v.stem == "decoder_sequence_00042"
-    assert v.phase == "decoder" and v.verb == "conformance-decompress"
+    assert v.phase == "decoder" and v.verb == "decompress"
     assert v.name == "decoder_sequence_00042.raw+large_f"
     assert v.input_path.exists() and v.expected_path.exists()
 
 
 def test_resolve_encoder_phase_and_verb(tmp_path):
     v = resolve_vector(_suite(tmp_path), "encoder_sequence_0007")
-    assert v.phase == "encoder" and v.verb == "conformance-compress"
+    assert v.phase == "encoder" and v.verb == "compress"
     assert v.name == "encoder_sequence_0007.124"
 
 
@@ -384,13 +384,18 @@ def test_resolve_missing_vector_raises(tmp_path):
 # --------------------------------------------------------------------------- api facade
 
 
-def _suite_with_vector(tmp_path, payload=b"HELLO"):
-    """A one-vector synthetic suite the mock adapter (which echoes input) can round-trip."""
+_DECODER_INPUT = b"\x00" + (16).to_bytes(4, "big") + b"\xaa\xbb"
+# The mock cannot start with F unknown, so it reports the one element as failed.
+_MOCK_OUTPUT = b"\x01" + bytes(4)
+
+
+def _suite_with_vector(tmp_path, expected=_MOCK_OUTPUT):
+    """A one-vector synthetic suite whose expected output is what the mock produces."""
     data = tmp_path / "suite"
     for sub in ("decoder_input", "decoder_output"):
         (data / sub).mkdir(parents=True)
-    (data / "decoder_input" / "decoder_sequence_00001.124+config").write_bytes(payload)
-    (data / "decoder_output" / "decoder_sequence_00001.raw+large_f").write_bytes(payload)
+    (data / "decoder_input" / "decoder_sequence_00001.124+config").write_bytes(_DECODER_INPUT)
+    (data / "decoder_output" / "decoder_sequence_00001.raw+large_f").write_bytes(expected)
     return data
 
 
@@ -422,14 +427,12 @@ def test_api_explain_reports_identical_when_output_matches(tmp_path):
 
 
 def test_api_explain_reports_divergence(tmp_path):
-    data = _suite_with_vector(tmp_path)
-    # Doctor the ground truth so the mock's echo no longer matches it.
-    (data / "decoder_output" / "decoder_sequence_00001.raw+large_f").write_bytes(b"HELLP")
+    data = _suite_with_vector(tmp_path, expected=b"\x00\xaa\xbb" + (16).to_bytes(4, "big"))
     run = _pb(tmp_path, data).explain("decoder_sequence_00001.raw+large_f", build=False)
     (r,) = run.results
     assert r.ran and not r.identical
-    assert r.byte_diff.first_diff_offset == 4
-    assert "expected 5 B, got 5 B" in run.summary()
+    assert r.byte_diff.first_diff_offset == 0
+    assert "expected 7 B, got 5 B" in run.summary()
 
 
 def test_api_explain_unknown_vector_raises(tmp_path):
@@ -451,8 +454,8 @@ def test_api_explain_missing_expected_output_raises(tmp_path):
 
 def test_api_explain_accepts_several_vectors(tmp_path):
     data = _suite_with_vector(tmp_path)
-    (data / "decoder_input" / "decoder_sequence_00002.124+config").write_bytes(b"WORLD")
-    (data / "decoder_output" / "decoder_sequence_00002.raw+large_f").write_bytes(b"WORLD")
+    (data / "decoder_input" / "decoder_sequence_00002.124+config").write_bytes(_DECODER_INPUT)
+    (data / "decoder_output" / "decoder_sequence_00002.raw+large_f").write_bytes(_MOCK_OUTPUT)
     run = _pb(tmp_path, data).explain(
         ["decoder_sequence_00001", "decoder_sequence_00002"], build=False
     )
@@ -461,3 +464,16 @@ def test_api_explain_accepts_several_vectors(tmp_path):
         "decoder_sequence_00002.raw+large_f",
     ]
     assert all(r.identical for r in run)
+
+
+def test_api_explain_reports_why_a_run_stopped(tmp_path):
+    data = tmp_path / "suite"
+    for sub in ("encoder_input", "encoder_output"):
+        (data / sub).mkdir(parents=True)
+    # Shorter than the 4-byte F header: the mock's API cannot take it, so the run stops at once.
+    (data / "encoder_input" / "encoder_sequence_0009.raw+config").write_bytes(b"\x00")
+    (data / "encoder_output" / "encoder_sequence_0009.124").write_bytes(b"HE")
+    run = _pb(tmp_path, data).explain("encoder_sequence_0009", build=False)
+    (r,) = run.results
+    assert r.ran and not r.identical
+    assert "stopped: input not representable by this codec's API" in run.summary()

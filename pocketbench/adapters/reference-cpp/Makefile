@@ -2,9 +2,9 @@
 # `pocket-bench build`.
 #
 # There is deliberately no MAX_PACKET_BITS here. The C++ codec's CCSDS124_MAX_PACKET_LENGTH only
-# feeds the DEFAULT template arg of BitBuffer<>, and the compress<N>/decompress<N> the adapter
-# calls always pass explicit N-derived sizes, so the macro is inert on this path and the reference-c
-# memset bench gotcha does not apply.
+# feeds the DEFAULT template arg of BitBuffer<>, and the adapter's BitBuffer<N * 6> always passes
+# an explicit N-derived size, so the macro is inert on this path and the reference-c memset bench
+# gotcha does not apply.
 SOURCE ?=
 
 CXX := g++

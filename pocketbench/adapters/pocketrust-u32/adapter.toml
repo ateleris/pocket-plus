@@ -1,0 +1,6 @@
+name        = "pocketrust-u32"
+language    = "Rust (pocketrust, 32-bit blocks)"
+source      = "../pocketrust"
+build       = "cargo build --release --features block32 --manifest-path ../pocketrust/Cargo.toml --target-dir target"
+entrypoint  = "target/release/adapter"
+version_cmd = "cargo --version"

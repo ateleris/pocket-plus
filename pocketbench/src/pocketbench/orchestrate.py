@@ -7,13 +7,16 @@ rather than in benchmark.py to keep that module free of adapter imports.
 
 from __future__ import annotations
 
+import math
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
-from pocketbench import adapter
-from pocketbench.adapter import Capabilities, Params
+from pocketbench import adapter, records, schedule
+from pocketbench.adapter import Capabilities
 from pocketbench.adapter.discovery import DiscoveredAdapter, entrypoint_present
-from pocketbench.benchmark import BenchMetrics, BuildInfo
+from pocketbench.benchmark import MIN_BUDGET_ITERATIONS, BenchMetrics, BuildInfo
 from pocketbench.config import Dataset
 
 
@@ -31,6 +34,15 @@ class Prepared:
 
 class ImplUnavailable(RuntimeError):
     """A selected impl could not be built or run (gate 1 or gate 2)."""
+
+
+def dataset_input(ds: Dataset) -> tuple[bytes, int]:
+    """The encoded compress input for ``ds`` and its packet count: the raw fields, each with the
+    flag byte of the reference pt/ft/rt schedule, behind an all-zero initial mask."""
+    data = ds.input.read_bytes()
+    count = -(-len(data) // records.payload_bytes(ds.packet_bits))
+    flags = schedule.flags(count, pt=ds.pt, ft=ds.ft, rt=ds.rt, robustness=ds.robustness)
+    return records.encode(records.from_fields(ds.packet_bits, data, flags)), count
 
 
 def prepare_impls(
@@ -68,15 +80,20 @@ def prepare_impls(
     return prepared
 
 
-def build_info(p: Prepared, max_packet_bits: int | None) -> BuildInfo:
-    """Reproducibility record for one impl's build, from its manifest + version_cmd."""
+def build_info(p: Prepared, packet_bits: int | None) -> BuildInfo:
+    """Reproducibility record for one impl's build, from its manifest + version_cmd.
+
+    ``packet_bits`` is the F a size-specialized build was compiled for, or None when it was not
+    rebuilt (``--no-build``) or the impl is not size-specialized.
+    """
     manifest = p.adapter.manifest
-    bits = "" if max_packet_bits is None else max_packet_bits
-    command = (
-        manifest.build.format(source=p.adapter.resolved_source, max_packet_bits=bits)
-        if manifest.build
-        else "(none)"
-    )
+    if not manifest.build:
+        command = "(none)"
+    elif manifest.size_specialized and packet_bits is None:
+        command = "(not rebuilt: --no-build)"
+    else:
+        bits = "" if packet_bits is None else packet_bits
+        command = manifest.build.format(source=p.adapter.resolved_source, max_packet_bits=bits)
     return BuildInfo(
         impl=manifest.name,
         language=manifest.language or "unknown",
@@ -85,29 +102,47 @@ def build_info(p: Prepared, max_packet_bits: int | None) -> BuildInfo:
         build_command=command,
         build_profile=p.capabilities.build_profile,
         limitations=p.capabilities.limitations,
+        size_specialized=manifest.size_specialized,
+        packet_bits=packet_bits if manifest.size_specialized else None,
     )
+
+
+def budget_plan(probe_ns: int, *, budget_s: float, warmup: int, iterations: int) -> tuple[int, int]:
+    """(warmup, iterations) for one measurement under a time budget, from one probed iteration.
+
+    As many timed iterations as fit in ``budget_s``, at least MIN_BUDGET_ITERATIONS and at most
+    ``iterations``; warmup keeps the requested warmup:iterations ratio, but at least 1 if asked for.
+    """
+    fit = math.ceil(budget_s * 1e9 / probe_ns) if probe_ns > 0 else iterations
+    n = min(iterations, max(MIN_BUDGET_ITERATIONS, fit))
+    w = max(1, math.ceil(warmup * n / iterations)) if warmup > 0 else 0
+    return w, n
 
 
 def bench_metrics(
-    p: Prepared, dataset: Dataset, *, warmup: int, iterations: int
+    p: Prepared, dataset: Dataset, *, warmup: int, iterations: int,
+    time_budget: float | None = None,
 ) -> list[BenchMetrics]:
-    """Run the adapter's bench for each op the impl supports and derive metrics in core."""
-    params = Params(
-        packet_bits=dataset.packet_bits, pt=dataset.pt, ft=dataset.ft,
-        rt=dataset.rt, robustness=dataset.robustness,
-    )
-    metrics: list[BenchMetrics] = []
-    for op in ("compress", "decompress"):
-        if op not in p.capabilities.ops:
-            continue
+    """Time compress, then decompress of that compress output, and derive the metrics in core.
 
-        payload = adapter.bench(
-            p.adapter, op, dataset.input, params, warmup=warmup, iterations=iterations
-        )
-        
-        metrics.append(
-            adapter.to_metrics(
+    With ``time_budget`` (seconds), each verb is probed with one warmup and one timed iteration and
+    then run with the counts :func:`budget_plan` derives from that probe.
+    """
+    data, count = dataset_input(dataset)
+    metrics: list[BenchMetrics] = []
+    with tempfile.TemporaryDirectory(prefix="pocketbench-bench-") as tmp:
+        inp, packets, fields = (Path(tmp) / n for n in ("in.rec", "packets.rec", "fields.rec"))
+        inp.write_bytes(data)
+        for verb, src, dst in (("compress", inp, packets), ("decompress", packets, fields)):
+            w, n = warmup, iterations
+            if time_budget is not None:
+                probe = adapter.bench(p.adapter, verb, src, dst, warmup=1, iterations=1,
+                                      packets=count)
+                w, n = budget_plan(probe.nanos[0], budget_s=time_budget, warmup=warmup,
+                                   iterations=iterations)
+            payload = adapter.bench(p.adapter, verb, src, dst, warmup=w, iterations=n,
+                                    packets=count)
+            metrics.append(adapter.to_metrics(
                 payload, impl_name=p.name, vector=dataset.name, packet_bits=dataset.packet_bits
-            )
-        )
+            ))
     return metrics

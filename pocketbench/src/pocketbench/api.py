@@ -9,8 +9,8 @@ returned containers to the console, and maps outcomes to exit codes.
 It never imports ``typer`` and never prints: progress goes through optional ``on_progress`` /
 ``on_message`` callbacks (silent by default), setup errors raise :class:`PocketBenchError`
 subclasses, and an expected outcome (a validation FAIL) is returned as data on the container's
-``ok``. ``conformance`` renders no verdict: :class:`ConformanceRun` carries counts and failing
-vector names only.
+``ok``. ``conformance`` renders no verdict: :class:`ConformanceRun` carries counts, failing vector
+names and their reasons.
 
 Compute methods write nothing to disk; persistence is the opt-in :meth:`PocketBench.write_report`.
 Validate/profile scratch files go to an auto-cleaned temp dir.
@@ -20,18 +20,20 @@ from __future__ import annotations
 
 import tempfile
 from collections.abc import Callable, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pocketbench import adapter, conformance, explain as explain_mod, orchestrate, profiling, report
+from pocketbench import sweep as sweep_mod
 from pocketbench import validate as validate_mod
 from pocketbench.benchmark import BenchMetrics, BuildInfo
-from pocketbench.config import Config, load_config
+from pocketbench.config import Config, Dataset, load_config
 from pocketbench.conformance import ConformanceResult
 from pocketbench.explain import ExplainResult
 from pocketbench.orchestrate import Prepared
 from pocketbench.profiling import ProfileResult
+from pocketbench.sweep import SweepResult
 from pocketbench.validate import ValidationResult
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -126,8 +128,8 @@ class BenchRun:
     metrics: list[BenchMetrics]
     build_infos: list[BuildInfo]
     environment: dict
-    iterations: int
-    max_packet_bits: int
+    iterations: int  # the fixed count, or the cap under a time budget
+    time_budget: float | None = None
 
     def to_dataframe(self) -> "pd.DataFrame":
         return _pandas().DataFrame([asdict(m) for m in self.metrics])
@@ -164,6 +166,18 @@ class ConformanceRun:
             for r in self.results
         ]
         return _pandas().DataFrame(rows)
+
+
+@dataclass
+class SweepRun:
+    """Result of :meth:`PocketBench.sweep`. No ``.ok``: a sweep reports, it does not grade."""
+
+    results: list[SweepResult]
+    parameters: dict  # the value lists or {"configs": [...]}, as passed
+    environment: dict
+
+    def to_dataframe(self) -> "pd.DataFrame":
+        return _pandas().DataFrame([asdict(r) for r in self.results])
 
 
 @dataclass
@@ -247,9 +261,9 @@ class PocketBench:
     def _progress_cb(self, override: ProgressCB | None) -> ProgressCB:
         return override or self._on_progress or _noop_progress
 
-    def _select_impls(self, names: list[str] | None):
+    def _select_impls(self, names: list[str] | None, command: str):
         try:
-            return self.config.select_impls(names)
+            return self.config.select_impls(names, command=command)
         except KeyError as exc:
             raise SelectionError(exc.args[0]) from None
 
@@ -259,36 +273,30 @@ class PocketBench:
         except KeyError as exc:
             raise SelectionError(exc.args[0]) from None
 
-    def _max_packet_bits(self) -> int:
-        """Bits for the C bench build: the largest configured dataset F (packet_bits).
+    @staticmethod
+    def _build_size(dataset: Dataset) -> int:
+        """The F a size-specialized build is compiled for to run `dataset`.
 
-        Floored at 720 (90-byte packets) so an F=1-only selection still builds the reference-c
-        codec with a sane buffer size rather than a degenerate 1-bit one.
+        Floored at 720 (90-byte packets) so an F=1 dataset still builds the reference-c codec with
+        a sane buffer size rather than a degenerate 1-bit one.
         """
-        largest = max((d.packet_bits for d in self.config.datasets.values()), default=720)
-        return max(largest, 720)
+        return max(dataset.packet_bits, 720)
+
+    def _max_packet_bits(self) -> int:
+        """The size for a standalone `build`, which has no dataset selection: all datasets."""
+        return max((self._build_size(d) for d in self.config.datasets.values()), default=720)
 
     def _prepare(
-        self, names: list[str] | None, *, build: bool, max_packet_bits: int | None,
+        self, names: list[str] | None, *, command: str, build: bool, max_packet_bits: int | None,
         on_message: MessageCB,
     ) -> list[Prepared]:
         return orchestrate.prepare_impls(
-            self._select_impls(names),
+            self._select_impls(names, command),
             explicit=names is not None,
             build=build,
             max_packet_bits=max_packet_bits,
             on_message=on_message,
         )
-
-    @staticmethod
-    def _runnable(prepared: list[Prepared], on_message: MessageCB) -> list[Prepared]:
-        runnable: list[Prepared] = []
-        for p in prepared:
-            if {"compress", "decompress"} <= set(p.capabilities.ops):
-                runnable.append(p)
-            else:
-                on_message(f"{p.name}: no compress/decompress (ops={p.capabilities.ops})")
-        return runnable
 
     # -- operations --------------------------------------------------------
 
@@ -297,7 +305,7 @@ class PocketBench:
         msg = self._message_cb(on_message)
         bits = self._max_packet_bits()
         outcomes: list[BuildOutcome] = []
-        for d in self._select_impls(impls):
+        for d in self._select_impls(impls, "build"):
             msg(f"building {d.manifest.name}")
             result = adapter.build(d, max_packet_bits=bits)
             outcomes.append(BuildOutcome(d.manifest.name, result.ok, result.stderr.strip()))
@@ -314,12 +322,13 @@ class PocketBench:
         """Run round-trip, reference-vector and cross-impl checks via the contract."""
         msg = self._message_cb(on_message)
         selected_datasets = self._select_datasets(datasets)
-        prepared = self._prepare(impls, build=build, max_packet_bits=None, on_message=msg)
-        runnable = self._runnable(prepared, msg)
-        if not runnable:
+        prepared = self._prepare(
+            impls, command="validate", build=build, max_packet_bits=None, on_message=msg
+        )
+        if not prepared:
             return ValidationRun([])
         with tempfile.TemporaryDirectory(prefix="pocketbench-validate-") as tmp:
-            results = validate_mod.validate(runnable, selected_datasets, workdir=Path(tmp))
+            results = validate_mod.validate(prepared, selected_datasets, workdir=Path(tmp))
         return ValidationRun(results)
 
     def bench(
@@ -330,32 +339,68 @@ class PocketBench:
         warmup: int = 10,
         iterations: int = 100,
         build: bool = True,
+        time_budget: float | None = None,
         on_message: MessageCB | None = None,
     ) -> BenchRun:
-        """Run the uniform in-process benchmark for the selected impls/datasets."""
+        """Run the uniform in-process benchmark for the selected impls/datasets.
+
+        ``time_budget`` (seconds) sizes each measurement's iterations to fit it, between
+        ``orchestrate.MIN_BUDGET_ITERATIONS`` and ``iterations``; None runs ``iterations`` everywhere.
+        """
+        if iterations < 1:
+            raise PocketBenchError("iterations must be at least 1")
+        if time_budget is not None and time_budget <= 0:
+            raise PocketBenchError("time budget must be positive")
         msg = self._message_cb(on_message)
         selected_datasets = self._select_datasets(datasets)
-        max_packet_bits = self._max_packet_bits()
-        prepared = self._prepare(impls, build=build, max_packet_bits=max_packet_bits, on_message=msg)
+        by_size: dict[int, list[Dataset]] = {}
+        for ds in selected_datasets:
+            by_size.setdefault(self._build_size(ds), []).append(ds)
+        sizes = sorted(by_size)
+        prepared = self._prepare(
+            impls, command="bench", build=build, max_packet_bits=sizes[0] if sizes else None,
+            on_message=msg,
+        )
+
+        def run(p: Prepared, group: list[Dataset], built_for: int | None) -> None:
+            for ds in group:
+                try:
+                    measured = orchestrate.bench_metrics(
+                        p, ds, warmup=warmup, iterations=iterations, time_budget=time_budget
+                    )
+                except RuntimeError as exc:
+                    msg(f"{p.name}/{ds.name}: {exc}")
+                    continue
+                metrics.extend(replace(m, build_packet_bits=built_for) for m in measured)
 
         metrics: list[BenchMetrics] = []
         build_infos: list[BuildInfo] = []
         for p in prepared:
-            msg(f"running {p.name} bench ({iterations} iter, {warmup} warmup)")
-            build_infos.append(orchestrate.build_info(p, max_packet_bits))
-            for ds in selected_datasets:
-                try:
-                    metrics.extend(
-                        orchestrate.bench_metrics(p, ds, warmup=warmup, iterations=iterations)
-                    )
-                except RuntimeError as exc:
-                    msg(f"{p.name}/{ds.name}: {exc}")
+            if time_budget is None:
+                msg(f"running {p.name} bench ({iterations} iter, {warmup} warmup)")
+            else:
+                msg(f"running {p.name} bench ({time_budget:g} s budget, at most {iterations} iter)")
+            if not (build and p.adapter.manifest.size_specialized):
+                build_infos.append(orchestrate.build_info(p, None))
+                run(p, selected_datasets, None)
+                continue
+            for i, bits in enumerate(sizes):
+                if i > 0:
+                    msg(f"rebuilding {p.name} for F <= {bits} bits")
+                    result = adapter.build(p.adapter, max_packet_bits=bits)
+                    if not result.ok:
+                        msg(f"{p.name}: rebuild for {bits} bits failed: {result.stderr.strip()}")
+                        continue
+                    # Self-reported limitations name the compiled-in size, so re-read them.
+                    p = Prepared(adapter=p.adapter, capabilities=adapter.capabilities(p.adapter))
+                build_infos.append(orchestrate.build_info(p, bits))
+                run(p, by_size[bits], bits)
         return BenchRun(
             metrics=metrics,
             build_infos=build_infos,
             environment=report.collect_environment(),
             iterations=iterations,
-            max_packet_bits=max_packet_bits,
+            time_budget=time_budget,
         )
 
     def profile(
@@ -374,13 +419,14 @@ class PocketBench:
             )
         msg = self._message_cb(on_message)
         selected_datasets = self._select_datasets(datasets)
-        prepared = self._prepare(impls, build=build, max_packet_bits=None, on_message=msg)
-        runnable = self._runnable(prepared, msg)
+        prepared = self._prepare(
+            impls, command="profile", build=build, max_packet_bits=None, on_message=msg
+        )
 
         results: list[ProfileResult] = []
         with tempfile.TemporaryDirectory(prefix="pocketbench-profile-") as tmp:
             workroot = Path(tmp)
-            for p in runnable:
+            for p in prepared:
                 for ds in selected_datasets:
                     msg(f"profiling {p.name} / {ds.name} ({runs} runs)")
                     try:
@@ -398,14 +444,16 @@ class PocketBench:
         mode: str = "encoder",
         build: bool = True,
         limit: int = 0,
+        jobs: int | None = None,
         results_dir: Path | None = None,
         on_progress: ProgressCB | None = None,
         on_message: MessageCB | None = None,
     ) -> ConformanceRun:
-        """Run the UAB/CNES conformance suite for impls whose adapters support it.
+        """Run the UAB/CNES conformance suite for every selected implementation.
 
         Pass ``results_dir`` to persist a per-impl ``conformance-<impl>.txt`` log (the CLI does);
-        with ``results_dir=None`` (the notebook default) no log is written.
+        with ``results_dir=None`` (the notebook default) no log is written. ``jobs`` vectors run at
+        a time (default: one per CPU); the result does not depend on it.
         """
         if mode not in ("encoder", "decoder", "both"):
             raise ConformanceUnavailable("mode must be encoder, decoder or both")
@@ -420,13 +468,12 @@ class PocketBench:
         msg = self._message_cb(on_message)
         progress = self._progress_cb(on_progress)
         manifest = conformance.load_manifest(suite.manifest)
-        prepared = self._prepare(impls, build=build, max_packet_bits=None, on_message=msg)
+        prepared = self._prepare(
+            impls, command="conformance", build=build, max_packet_bits=None, on_message=msg
+        )
 
         results: list[ConformanceResult] = []
         for p in prepared:
-            if not (p.capabilities.conformance_compress or p.capabilities.conformance_decompress):
-                msg(f"{p.name}: adapter reports no conformance support")
-                continue
             msg(f"running {p.name} conformance ({mode}, {suite.data_dir.name})")
             results_file = (
                 results_dir / f"conformance-{p.name}.txt" if results_dir is not None else None
@@ -441,11 +488,55 @@ class PocketBench:
                         results_file=results_file,
                         limit=limit or None,
                         on_progress=progress,
+                        jobs=jobs,
                     )
                 )
             except RuntimeError as exc:
                 msg(str(exc))
         return ConformanceRun(results=results, mode=mode)
+
+    def sweep(
+        self,
+        impls: list[str] | None,
+        datasets: list[str] | None = None,
+        *,
+        pt: Sequence[int | None] | None = None,
+        ft: Sequence[int | None] | None = None,
+        rt: Sequence[int | None] | None = None,
+        robustness: Sequence[int] | None = None,
+        configs: Sequence[dict] | None = None,
+        jobs: int | None = None,
+        build: bool = True,
+        on_progress: ProgressCB | None = None,
+        on_message: MessageCB | None = None,
+    ) -> SweepRun:
+        """Compression ratio (exact bits in / out) per impl x dataset x configuration.
+
+        Configurations are every combination of the given value lists, or ``configs``; a parameter
+        neither sets keeps each dataset's own value, and None is off (the flag fires on the first
+        packet only). ``jobs`` measurements run at a time (default: one per CPU); nothing is timed.
+        """
+        if not impls:
+            raise PocketBenchError("sweep needs at least one implementation")
+        configs = [dict(c) for c in configs] if configs is not None else None
+        lists = {k: list(v) for k, v in zip(sweep_mod.PARAMS, (pt, ft, rt, robustness))
+                 if v is not None}
+        try:
+            expanded = sweep_mod.expand(**lists, configs=configs)
+        except ValueError as exc:
+            raise PocketBenchError(str(exc)) from None
+        selected = self._select_datasets(datasets)
+        prepared = self._prepare(
+            impls, command="sweep", build=build, max_packet_bits=None,
+            on_message=self._message_cb(on_message),
+        )
+        results = sweep_mod.run(prepared, selected, expanded, jobs=jobs,
+                                on_progress=self._progress_cb(on_progress))
+        return SweepRun(
+            results=results,
+            parameters={"configs": configs} if configs is not None else lists,
+            environment=report.collect_environment(),
+        )
 
     def explain(
         self,
@@ -482,33 +573,31 @@ class PocketBench:
         for v in resolved:
             if not v.expected_path.exists():
                 raise VectorNotFound(f"suite has no expected output: {v.expected_path}")
-        prepared = self._prepare(impls, build=build, max_packet_bits=None, on_message=msg)
+        prepared = self._prepare(
+            impls, command="explain", build=build, max_packet_bits=None, on_message=msg
+        )
 
         results: list[ExplainResult] = []
         with tempfile.TemporaryDirectory() as tmp:
-            out_path = Path(tmp) / "out"
             for p in prepared:
                 for v in resolved:
-                    supported = (
-                        p.capabilities.conformance_compress if v.phase == "encoder"
-                        else p.capabilities.conformance_decompress
-                    )
-                    if not supported:
-                        msg(f"{p.name}: adapter has no {v.verb} verb, skipping {v.name}")
-                        continue
                     msg(f"explaining {v.name} for {p.name}")
-                    vr = conformance.run_vector(p, v.verb, v.input_path, out_path, timeout)
+                    vr = conformance.run_vector(p, v.phase, v.input_path, Path(tmp), timeout)
                     results.append(explain_mod.build_result(
                         impl=p.name, vector=v.name, phase=v.phase,
-                        ran=vr.ok, returncode=vr.returncode, stderr=vr.stderr,
+                        ran=vr.data is not None,
+                        returncode=vr.run.returncode if vr.run.returncode is not None else -1,
+                        stderr=vr.run.stderr if vr.data is not None
+                        else f"{vr.run.reason}\n{vr.run.stderr}",
                         expected=v.expected_path.read_bytes(),
                         actual=vr.data or b"",
+                        reason="" if vr.run.completed else vr.run.reason,
                     ))
         return ExplainRun(results=results)
 
     # -- persistence -------------------------------------------------------
 
-    def write_report(self, run: BenchRun | ProfileRun) -> list[Path]:
+    def write_report(self, run: BenchRun | ProfileRun | SweepRun) -> list[Path]:
         """Persist a run's report artifacts to ``settings.results_dir`` (opt-in).
 
         Benchmark runs write ``benchmark.md`` + ``benchmark.json``; profile runs write
@@ -519,14 +608,17 @@ class PocketBench:
         if isinstance(run, BenchRun):
             return [
                 report.write_benchmark_markdown(
-                    run.metrics, run.environment, run.build_infos, run.iterations,
-                    run.max_packet_bits, results_dir,
+                    run.metrics, run.environment, run.build_infos, run.iterations, results_dir,
+                    time_budget=run.time_budget,
                 ),
                 report.write_json(
-                    run.metrics, run.environment, run.build_infos, run.iterations,
-                    run.max_packet_bits, results_dir,
+                    run.metrics, run.environment, run.build_infos, run.iterations, results_dir,
+                    time_budget=run.time_budget,
                 ),
             ]
         if isinstance(run, ProfileRun):
             return [report.write_profile_json(run.results, run.environment, run.runs, results_dir)]
+        if isinstance(run, SweepRun):
+            return [report.write_sweep_json(run.results, run.parameters, run.environment,
+                                            results_dir)]
         raise PocketBenchError(f"write_report does not handle {type(run).__name__}")

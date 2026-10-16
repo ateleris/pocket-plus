@@ -10,9 +10,19 @@ from pocketbench.adapter.discovery import DiscoveredAdapter, discover_adapters, 
 
 REPO = Path(__file__).resolve().parents[1]
 
-# Every Spec in test_adapters.py leaves max_packet_bits at None, i.e. the codec default of 65535
-# bits: the conformance tests feed UAB vectors whose large_f exceeds 720, and one binary cannot be
-# both sizes.
+
+def scripted_adapter(tmp_path: Path, body: str) -> DiscoveredAdapter:
+    """An adapter whose every subcommand runs ``body`` (Python), for failure modes the mock never
+    shows: crashes, hangs, malformed output."""
+    d = tmp_path / "adapters" / "scripted"
+    d.mkdir(parents=True)
+    (d / "adapter.py").write_text(f"import os, sys, time\nfrom pathlib import Path\n{body}\n")
+    (d / "adapter.toml").write_text('interpreter = "python"\nentrypoint = "adapter.py"\n')
+    (found,) = discover_adapters(tmp_path / "adapters", repo_root=tmp_path, variables={})
+    return found
+
+# Real adapters are built at the codec default (65535 bits): the UAB vectors in test_adapters.py
+# have large_f above 720, and one binary cannot be both sizes.
 
 
 def _settings_variables() -> dict[str, str | Path]:
@@ -59,14 +69,13 @@ def _built(name: str, max_packet_bits: int | None):
 _BUILT: dict[str, DiscoveredAdapter] = {}
 
 
-def built_adapter(name: str, max_packet_bits: int | None = None) -> DiscoveredAdapter:
+def built_adapter(name: str) -> DiscoveredAdapter:
     """A built adapter for `name`, or skip if its codec is not present.
 
     Memoized because reference-c's Makefile recompiles on every request (its FORCE target) and the
-    parametrized suite asks from every test body. A plain function rather than a fixture so a test
-    can pass its Spec's own build settings.
+    parametrized suite asks from every test body.
     """
     if name not in _BUILT:
-        _BUILT[name] = _built(name, max_packet_bits)
+        _BUILT[name] = _built(name, None)
     return _BUILT[name]
 

@@ -15,10 +15,12 @@ from rich.console import Console
 from rich.table import Table
 
 from pocketbench import report
+from pocketbench import sweep as sweep_mod
 from pocketbench.api import (
     ConfigError,
     ConformanceUnavailable,
     PocketBench,
+    PocketBenchError,
     ProfileUnavailable,
     SelectionError,
     VectorNotFound,
@@ -39,11 +41,17 @@ ConfigOpt = Annotated[
 ]
 ImplOpt = Annotated[
     list[str] | None,
-    typer.Option("--impl", "-i", help="Implementation to use (repeatable). Default: all."),
+    typer.Option(
+        "--impl", "-i",
+        help="Implementation to use (repeatable; globs like 'pocketrust-*' allowed). Default: all.",
+    ),
 ]
 DatasetOpt = Annotated[
     list[str] | None,
-    typer.Option("--dataset", "-d", help="Dataset to use (repeatable). Default: all."),
+    typer.Option(
+        "--dataset", "-d",
+        help="Dataset to use (repeatable; globs like 'reference-*' allowed). Default: all.",
+    ),
 ]
 
 
@@ -60,15 +68,27 @@ def _load(config: Path) -> PocketBench:
         raise typer.Exit(code=2) from None
 
 
-def _show_selection(pb: PocketBench, impls: list[str] | None, datasets: list[str] | None):
-    """Print the impl/dataset selection table, exiting 2 on an unknown name."""
+def _count(items: list, noun: str) -> str:
+    return f"{len(items)} {noun}{'' if len(items) == 1 else 's'}"
+
+
+def _show_selection(
+    pb: PocketBench, impls: list[str] | None, datasets: list[str] | None, *, command: str,
+    verbose: bool,
+):
+    """Print the selection (a count, or with ``verbose`` the full table), exiting 2 on an unknown
+    name."""
     try:
-        selected_impls = pb.config.select_impls(impls)
+        selected_impls = pb.config.select_impls(impls, command=command)
         selected_datasets = pb.config.select_datasets(datasets)
     except KeyError as exc:
         console.print(f"[red]{exc.args[0]}[/red]")
         raise typer.Exit(code=2) from None
 
+    if not verbose:
+        console.print(f"Selection: {_count(selected_impls, 'implementation')}, "
+                      f"{_count(selected_datasets, 'dataset')}")
+        return
     table = Table(title="Selection", show_header=True, header_style="bold")
     table.add_column("Implementations")
     table.add_column("Datasets")
@@ -104,10 +124,13 @@ def validate(
     impl: ImplOpt = None,
     dataset: DatasetOpt = None,
     build: Annotated[bool, typer.Option(help="Build implementations before validating.")] = True,
+    verbose: Annotated[
+        bool, typer.Option("--verbose", "-v", help="List every selected impl and dataset.")
+    ] = False,
 ):
     """Run round-trip, reference-vector and cross-impl checks via the contract."""
     pb = _load(config)
-    _show_selection(pb, impl, dataset)
+    _show_selection(pb, impl, dataset, command="validate", verbose=verbose)
     try:
         run = pb.validate(impl, dataset, build=build)
     except (SelectionError, ImplUnavailable) as exc:
@@ -142,24 +165,45 @@ def bench(
     warmup: Annotated[int, typer.Option(help="Untimed warmup iterations per run.")] = 10,
     iterations: Annotated[int, typer.Option(help="Timed iterations per run.")] = 100,
     build: Annotated[bool, typer.Option(help="Build adapters before running.")] = True,
+    time_budget: Annotated[
+        float | None,
+        typer.Option(
+            "--time-budget",
+            help="Seconds of timed work per measurement: iterations are sized to fit, at least 5 "
+            "and at most --iterations, warmup scaled to match. Default: --iterations everywhere.",
+        ),
+    ] = None,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose", "-v",
+            help="List the selection and add a table per dataset and operation.",
+        ),
+    ] = False,
 ):
     """Run the uniform in-process benchmark for the selected impls/datasets via the contract."""
     pb = _load(config)
-    _show_selection(pb, impl, dataset)
+    _show_selection(pb, impl, dataset, command="bench", verbose=verbose)
     try:
-        run = pb.bench(impl, dataset, warmup=warmup, iterations=iterations, build=build)
-    except (SelectionError, ImplUnavailable) as exc:
+        run = pb.bench(impl, dataset, warmup=warmup, iterations=iterations, build=build,
+                       time_budget=time_budget)
+    except ImplUnavailable as exc:
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1 if isinstance(exc, ImplUnavailable) else 2) from None
+        raise typer.Exit(code=1) from None
+    except PocketBenchError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from None
 
     if not run.metrics:
         console.print("[red]No benchmark results for the selected implementations/datasets.[/red]")
         raise typer.Exit(code=1)
 
-    for table in report.benchmark_tables(run.metrics):
-        console.print(table)
+    if verbose:
+        for table in report.benchmark_tables(run.metrics):
+            console.print(table)
 
-    console.print(report.build_settings_table(run.build_infos, run.max_packet_bits))
+    console.print(report.overview_table(run.metrics))
+    console.print(report.build_settings_table(run.build_infos))
 
     md, js = pb.write_report(run)
     console.print(f"[green]Wrote[/green] {md}\n[green]Wrote[/green] {js}")
@@ -172,10 +216,13 @@ def profile(
     dataset: DatasetOpt = None,
     runs: Annotated[int, typer.Option(help="Timed runs per operation (peak RSS is the max).")] = 3,
     build: Annotated[bool, typer.Option(help="Build implementations before profiling.")] = True,
+    verbose: Annotated[
+        bool, typer.Option("--verbose", "-v", help="List every selected impl and dataset.")
+    ] = False,
 ):
     """Profile peak memory (RSS) and compression ratio via the adapter subprocess."""
     pb = _load(config)
-    _show_selection(pb, impl, dataset)
+    _show_selection(pb, impl, dataset, command="profile", verbose=verbose)
     try:
         run = pb.profile(impl, dataset, runs=runs, build=build)
     except ProfileUnavailable as exc:
@@ -195,6 +242,69 @@ def profile(
     console.print(f"[green]Wrote[/green] {js}")
 
 
+def _values(spec: str | None, name: str, *, allow_off: bool = True) -> list[int | None] | None:
+    if spec is None:
+        return None
+    try:
+        return sweep_mod.parse_values(spec, allow_off=allow_off)
+    except ValueError as exc:
+        console.print(f"[red]--{name}: {exc}[/red]")
+        raise typer.Exit(code=2) from None
+
+
+_SPEC_HELP = "Values to sweep: integers, ranges a-b and 'off' (first packet only), comma-separated."
+
+
+@app.command()
+def sweep(
+    config: ConfigOpt = DEFAULT_CONFIG,
+    impl: ImplOpt = None,
+    dataset: DatasetOpt = None,
+    pt: Annotated[str | None, typer.Option("--pt", help=_SPEC_HELP)] = None,
+    ft: Annotated[str | None, typer.Option("--ft", help=_SPEC_HELP)] = None,
+    rt: Annotated[str | None, typer.Option("--rt", help=_SPEC_HELP)] = None,
+    robustness: Annotated[
+        str | None, typer.Option("--robustness", help="Values to sweep: integers and ranges a-b.")
+    ] = None,
+    jobs: Annotated[
+        int | None, typer.Option(help="Measurements run at a time. Default: one per CPU.")
+    ] = None,
+    build: Annotated[bool, typer.Option(help="Build implementations before sweeping.")] = True,
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", "-v", help="List the selection and add a row per dataset."),
+    ] = False,
+):
+    """Compression ratio (exact bits) for every combination of the given parameter values."""
+    values = {
+        "pt": _values(pt, "pt"),
+        "ft": _values(ft, "ft"),
+        "rt": _values(rt, "rt"),
+        "robustness": _values(robustness, "robustness", allow_off=False),
+    }
+    if not impl:
+        console.print("[red]sweep needs --impl (e.g. --impl pocketrust-u64)[/red]")
+        raise typer.Exit(code=2)
+    pb = _load(config)
+    _show_selection(pb, impl, dataset, command="sweep", verbose=verbose)
+    try:
+        run = pb.sweep(impl, dataset, **values, jobs=jobs, build=build)
+    except ImplUnavailable as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from None
+    except PocketBenchError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from None
+
+    if verbose:
+        console.print(report.sweep_detail_table(run.results))
+    console.print(report.sweep_table(run.results))
+    for line in report.sweep_incomplete_lines(run.results):
+        console.print(f"[yellow]{line}[/yellow]")
+    (js,) = pb.write_report(run)
+    console.print(f"[green]Wrote[/green] {js}")
+
+
 @app.command()
 def conformance(
     config: ConfigOpt = DEFAULT_CONFIG,
@@ -202,12 +312,13 @@ def conformance(
     mode: Annotated[str, typer.Option(help="encoder | decoder | both.")] = "encoder",
     build: Annotated[bool, typer.Option(help="Build conformance harnesses first.")] = True,
     limit: Annotated[int, typer.Option(help="Only the first N vectors per phase (0 = all).")] = 0,
+    jobs: Annotated[int, typer.Option(help="Vectors run at a time (0 = one per CPU).")] = 0,
 ):
-    """Run the UAB/CNES conformance suite for impls whose adapters support it."""
+    """Run the UAB/CNES conformance suite for the selected implementations."""
     pb = _load(config)
     try:
         run = pb.conformance(
-            impl, mode=mode, build=build, limit=limit,
+            impl, mode=mode, build=build, limit=limit, jobs=jobs or None,
             results_dir=pb.config.settings.results_dir,
         )
     except ConformanceUnavailable as exc:
@@ -218,7 +329,7 @@ def conformance(
         raise typer.Exit(code=1 if isinstance(exc, ImplUnavailable) else 2) from None
 
     if not run.results:
-        console.print("[red]No implementations with conformance support selected.[/red]")
+        console.print("[red]No implementations selected.[/red]")
         raise typer.Exit(code=1)
 
     table = Table(title=f"Conformance ({mode})", header_style="bold")
@@ -229,8 +340,6 @@ def conformance(
     console.print(table)
     for r in run.results:
         console.print(f"[dim]{r.impl}: full log -> {r.results_file}[/dim]")
-        if r.skipped_phases:
-            console.print(f"[yellow]{r.impl}: adapter has no {', '.join(r.skipped_phases)} verb (skipped)[/yellow]")
 
 
 @app.command()
@@ -255,7 +364,7 @@ def explain(
         raise typer.Exit(code=1 if isinstance(exc, ImplUnavailable) else 2) from None
 
     if not run.results:
-        console.print("[red]No implementations with conformance support selected.[/red]")
+        console.print("[red]No implementations selected.[/red]")
         raise typer.Exit(code=1)
 
     for r in run.results:

@@ -34,6 +34,16 @@ def test_load_manifest_full(tmp_path):
     assert m.dir == d.resolve()
 
 
+@pytest.mark.parametrize(("build", "specialized"), [
+    ('build = "make SOURCE={source} MAX_PACKET_BITS={max_packet_bits}"\n', True),
+    ('build = "cargo build --release"\n', False),
+    ("", False),
+])
+def test_size_specialized_iff_build_takes_max_packet_bits(tmp_path, build, specialized):
+    d = _write(tmp_path / "x", f'entrypoint = "adapter"\n{build}')
+    assert load_manifest(d).size_specialized is specialized
+
+
 def test_load_manifest_defaults_name_to_folder_and_optional_none(tmp_path):
     d = _write(tmp_path / "mock", 'interpreter = "python"\nentrypoint = "adapter.py"\n')
     m = load_manifest(d)
@@ -73,3 +83,24 @@ def test_resolve_source_unknown_var_raises(tmp_path):
     m = Manifest("c", "C", "${missing}/c", None, "build/adapter", None, None, tmp_path)
     with pytest.raises(KeyError):
         resolve_source(m, repo_root=tmp_path, variables={})
+
+
+def test_skip_commands_defaults_to_none_skipped(tmp_path):
+    d = _write(tmp_path / "x", 'entrypoint = "adapter"\n')
+    assert load_manifest(d).skip_commands == ()
+
+
+def test_skip_commands_parsed(tmp_path):
+    d = _write(tmp_path / "x", 'entrypoint = "adapter"\nskip_commands = ["bench", "profile"]\n')
+    assert load_manifest(d).skip_commands == ("bench", "profile")
+
+
+def test_skip_commands_rejects_an_unknown_command(tmp_path):
+    d = _write(tmp_path / "x", 'entrypoint = "adapter"\nskip_commands = ["benhc"]\n')
+    with pytest.raises(ValueError, match="benhc"):
+        load_manifest(d)
+
+
+def test_sweep_is_a_skippable_command(tmp_path):
+    d = _write(tmp_path / "x", 'entrypoint = "adapter"\nskip_commands = ["sweep"]\n')
+    assert load_manifest(d).skip_commands == ("sweep",)

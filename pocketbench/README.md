@@ -9,8 +9,10 @@ pocketbench is a harness, not a codec. Each implementation is fronted by a small
 **adapter** under `adapters/<name>/` that speaks a fixed contract; pocketbench talks only to that
 contract. The codecs themselves are never committed here and never nested as a git repo inside
 this one: the `ccsds124` reference repo is an external checkout reached through the
-`ccsds124_root` setting, and the RHEA-internal `pocketrust` is the sibling folder `../pocketrust`
-of the enclosing pocket-plus repo.
+`ccsds124_root` setting, and the RHEA-internal `pocketrust` and `pocketplus` are the sibling folders
+`../pocketrust` and `../pocketplus` of the enclosing pocket-plus repo. pocketrust runs as two
+adapters, `pocketrust-u32` and `pocketrust-u64`, one per block width (its `block32` / `block64`
+features); both build the one adapter crate in `adapters/pocketrust/`.
 
 ## Quick start
 
@@ -30,14 +32,19 @@ git clone https://github.com/tanagraspace/ccsds124 implementations/ccsds124
 ```
 
 Without that checkout nothing breaks: the `reference-*` adapters and the reference datasets are
-skipped, and `pocketrust` plus the synthetic datasets still build, validate and bench.
+skipped, and `pocketrust-u32`, `pocketrust-u64`, `pocketplus` and the synthetic datasets still build, validate and bench.
 
 Select which implementations and datasets to run (both default to "all discovered"):
 
 ```bash
-uv run pocket-bench bench --impl reference-c --impl reference-rust --dataset reference-simple --dataset reference-housekeeping
-uv run pocket-bench validate --impl reference-rust
+uv run pocket-bench bench --impl reference-c --impl pocketrust-u64 --dataset reference-simple --dataset reference-housekeeping
+uv run pocket-bench validate --impl pocketrust-u32 --impl pocketrust-u64
+uv run pocket-bench bench --impl 'pocketrust-*' --dataset 'reference-*' --dataset 'synthetic-*'
 ```
+
+`--impl` and `--dataset` also take a glob (quote it so the shell leaves it alone); a glob that
+matches nothing is an error, and anything selected twice runs once. Impls matched by a glob count
+as named, so an unavailable one is a hard error, as with `--impl <name>`.
 
 Impls are discovered from `adapters/*/adapter.toml`. An impl selected with `--impl` that is
 unavailable (its codec is not placed, or its wrapper is not built) is a hard error; an unavailable
@@ -46,29 +53,23 @@ friendly locally.
 
 ## The adapter contract
 
-Every impl provides one wrapper executable that responds to these subcommands. Arguments are keyed
-`--key=value` flags in any order, and `--packet-bits` is F, the packet field width in **bits**;
-pocketbench passes explicit input and output paths:
+Every impl provides one wrapper executable that responds to three subcommands. Arguments are keyed
+`--key=value` flags in any order, and pocketbench always passes absolute paths:
 
 | Subcommand | Purpose |
 |---|---|
-| `capabilities` | print JSON self-describing the impl (ops, timing tier, `reference_conformant`, conformance support, param schedule) |
-| `compress --in= --out= --packet-bits= --pt= --ft= --rt= --robustness=` | compress to exactly `--out` |
-| `decompress --in= --out= --packet-bits= --pt= --ft= --rt= --robustness=` | decompress to exactly `--out` |
-| `bench --op= --in= --warmup= --iterations= --packet-bits= --pt= --ft= --rt= --robustness=` | run the in-process warmup+timed loop, print the raw per-iteration nanos as JSON |
-| `conformance-compress --in= --out=` | run one UAB/CNES encoder vector (optional) |
-| `conformance-decompress --in= --out=` | run one UAB/CNES decoder vector (optional) |
+| `capabilities` | print `{"build_profile": "...", "limitations": "..."}`: report text, gating nothing |
+| `compress --in= --out= [--warmup= --iterations=]` | compress a record container to exactly `--out` |
+| `decompress --in= --out= [--warmup= --iterations=]` | decompress a record container to exactly `--out` |
 
-Parsing is strict: an unknown, missing or unparseable flag, or any positional argument, must exit 2,
-so a harness that has moved on from what an adapter implements fails loudly instead of running with
-a parameter it misread.
+Every command uses these two verbs: bench adds `--warmup` / `--iterations`, validate, profile,
+conformance and explain do not. **Parsing is strict**: an unknown, duplicated or unparseable flag, a
+missing `--in` / `--out`, any positional argument, or a malformed container exits 2, so a harness
+that has moved on from what an adapter implements fails loudly.
 
-pocketbench core owns dataset staging, warmup/iteration counts, all metric derivation, aggregation,
-reporting, and conformance grading. The adapter owns mapping the uniform parameter set to the codec's
-real API and calling the codec; the contract plumbing between them (flag parsing, IO, the timed loop,
-the JSON payloads) is shared, one implementation per language under `adapters/common/`. See
-[`docs/IMPLEMENTATION-INTERFACE.md`](docs/IMPLEMENTATION-INTERFACE.md) for the full contract and how
-to add an implementation.
+pocketbench core owns everything that is not the codec (dataset kinds, the pt/ft/rt schedule,
+re-framing, comparison, metrics, reports); the adapter supplies per-packet codec hooks over the
+shared plumbing. See [`docs/IMPLEMENTATION-INTERFACE.md`](docs/IMPLEMENTATION-INTERFACE.md).
 
 ## Benchmarking
 
@@ -76,7 +77,7 @@ to add an implementation.
 
 ```bash
 uv run pocket-bench bench --warmup 10 --iterations 100
-uv run pocket-bench bench --impl reference-rust --dataset reference-simple --iterations 100
+uv run pocket-bench bench --impl pocketrust-u32 --impl pocketrust-u64 --dataset reference-simple --iterations 100
 uv run pocket-bench bench --iterations 100 --no-build   # reuse already-built adapters
 ```
 
@@ -89,18 +90,54 @@ can be benched.
 
 Notes:
 - **Iterations / warmup**: defaults are `100` / `10`; lower iteration counts run faster but noisier.
-- **Timing tier**: an adapter that can only wrap a whole-file CLI reports `timing_tier =
-  subprocess` via `capabilities`, so its rows are never silently compared against `in_process` rows.
-- Results are written to `results/benchmark.md` (a `BENCHMARK.md`-style report with a reproducible
-  **Build Settings** section) and `results/benchmark.json`, and printed as tables. Absolute numbers
-  depend on the host, so use them for relative comparison.
+- **Time budget** (`--time-budget SECONDS`, opt-in): instead of `--iterations` everywhere, each
+  measurement is probed with one iteration and then runs as many timed iterations as fit in the
+  budget, at least 5 and at most `--iterations`, with warmup scaled to keep the warmup:iterations
+  ratio. Small datasets still get the full count; large ones (e.g. 151,200 packets) get a few, which
+  is enough because one iteration already averages over every packet. Each result row records the
+  count it ran. Measurements always run one at a time: concurrent runs skew the timings (on a hybrid
+  CPU, by up to 60% at 8 concurrent runs).
+- **What is timed**: per iteration, the adapter creates its codec state, runs every packet through
+  the same per-packet hooks conformance verifies, and drops the state; nothing else is in the timed
+  region.
+- The console shows a **Throughput Overview** (MB/s, one row per dataset, one column per impl
+  under Compress and Decompress) and the build settings; `-v` / `--verbose` lists every selected
+  impl and dataset (otherwise only counted) and adds a full table per dataset and operation (time,
+  packets/sec, µs/pkt, MB/s). On `validate` and `profile`, `-v` only lists the selection. `results/benchmark.md` (a
+  `BENCHMARK.md`-style report with a reproducible **Build Settings** section) and
+  `results/benchmark.json` always hold everything. Absolute numbers depend on the host, so use them
+  for relative comparison.
+
+## Sweeping parameters (compression ratio)
+
+`pocket-bench sweep` compresses each selected dataset once per parameter configuration and reports
+the compression ratio in exact bits (packets x F in, the compressed packets' bits out, no byte
+padding). Each of `--pt`, `--ft`, `--rt`, `--robustness` takes a value spec (`1-50`, `5,10,20`,
+`off`, or mixed); every combination runs, and a parameter not given keeps each dataset's own value.
+`off` (not for robustness) sets that flag on the first packet only.
+
+```bash
+uv run pocket-bench sweep -i pocketrust-u64 -d 'hktm-1week-*' --pt 1-50 --ft off --rt off --robustness 0
+uv run pocket-bench sweep -i pocketrust-u64 -d 'hktm-1week-*' --robustness 0-7 -v
+```
+
+- `--impl` is required: conformant encoders emit identical bits, so one is enough; a second one
+  only cross-checks.
+- The console shows one row per configuration with each corpus's mean ratio (a corpus is the
+  dataset folder, e.g. `hktm-1week`); `-v` adds a row per dataset. Measurements that did not
+  complete are listed with their reason and left out of the means. Writes `results/sweep.json`.
+- Nothing is timed, so measurements run in parallel (`--jobs`, default one per CPU), each in its
+  own adapter process.
+- In Python, `pb.sweep(...)` also takes `configs=[dict(pt=10, ft=2 * T, rt=T, robustness=0), ...]`
+  for linked parameters. The notebook reproduces Figures 3, 5, 6 and 7 of Hernandez-Cabronero et
+  al., *Resiliency and Efficiency of the CCSDS 124.0-B-1 Telemetry Compression Standard* (2024).
 
 ## Validating correctness
 
 `pocket-bench validate` checks that each implementation is actually correct, not just fast:
 
 ```bash
-uv run pocket-bench validate --impl reference-c --impl reference-rust --dataset reference-simple --dataset reference-hiro
+uv run pocket-bench validate --impl reference-c --impl pocketrust-u64 --dataset reference-simple --dataset reference-hiro
 uv run pocket-bench validate --no-build          # skip rebuilding the adapters
 ```
 
@@ -113,10 +150,8 @@ with explicit output paths:
 - **cross-impl** - all selected implementations produce the same packet (one SHA-256),
   equal to the reference packet when one exists.
 
-`capabilities.reference_conformant` gates the checks: an impl that is not byte-identical to the ESA
-reference (e.g. the mock identity codec) runs round-trip only and is excluded from the
-reference / cross-impl comparison. The command exits non-zero if
-any check fails, so it doubles as a CI gate.
+Every implementation goes through every check. The command exits non-zero if any check fails,
+so it doubles as a CI gate.
 
 Run `validate` before trusting `bench` numbers: the benchmark measures speed only and would happily
 report a fast but incorrect codec.
@@ -126,7 +161,7 @@ report a fast but incorrect codec.
 `pocket-bench profile` measures peak memory and compression ratio, complementing `bench`:
 
 ```bash
-uv run pocket-bench profile --impl reference-c --impl reference-rust --dataset reference-simple --dataset reference-venus-express --runs 3
+uv run pocket-bench profile --impl reference-c --impl pocketrust-u64 --dataset reference-simple --dataset reference-venus-express --runs 3
 uv run pocket-bench profile --no-build
 ```
 
@@ -154,17 +189,18 @@ uv run pocket-bench conformance --impl reference-c --limit 200   # quick smoke t
 ```
 
 These vectors are **not** pocketbench datasets: they are self-describing `.raw+config` files
-(embedded `large_f`, mask, and per-packet flags). pocketbench runs each vector through the adapter's
-`conformance-compress` / `conformance-decompress` verb and compares the output (size + SHA-256) to
+(embedded `large_f`, mask, and per-packet flags). pocketbench re-frames each vector into the record container, runs it through the same
+`compress` / `decompress` verb every command uses, and compares the output (size + SHA-256) to
 `crossvalidation/file_list.csv`. It **reports rather than grades**: you get total / passed / failed per
-impl and the failing vector names in `results/conformance-<impl>.txt`, with no pass/fail verdict. A
+impl and each failing vector with its reason in `results/conformance-<impl>.txt`, with no pass/fail
+verdict. A
 failing vector never affects the exit code; only a run that could not execute does. Conformance is
 local-only: the licensed yellow-book vectors are never uploaded, so it never runs in CI.
 
 Requirements:
 - `[settings] conformance_data_dir` in the config must point at the extracted suite.
-- The impl's adapter must report conformance support via `capabilities`. reference-c and pocketrust do;
-  reference-rust does not (the Rust codec exposes no per-packet flag API), so it is skipped.
+- Nothing else: every selected impl runs every vector, and each failing vector is logged with its
+  reason.
 
 ## Explaining a failure
 
