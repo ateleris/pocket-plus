@@ -26,10 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# Decoder frame status bytes, per the suite README.
-STATUS_DECODED = 0x00
-STATUS_UNDECODABLE = 0x01
-STATUS_LOST = 0x02
+from pocketbench.records import STATUS_DECODED, STATUS_LOST, STATUS_UNDECODABLE
 
 _STATUS_NAME = {
     STATUS_DECODED: "decoded",
@@ -154,6 +151,7 @@ class ExplainResult:
     actual: bytes          # what the adapter produced (empty when it did not run)
     byte_diff: ByteDiff
     decoder: DecoderDiff | None = None
+    reason: str = ""       # why the run stopped early, empty when it processed every record
 
     @property
     def identical(self) -> bool:
@@ -430,6 +428,8 @@ def summary_lines(r: ExplainResult, *, max_frames: int = MAX_LISTED_FRAMES) -> l
     is always on ``result.decoder.frame_diffs``.
     """
     out = [f"{r.phase.upper()}  {r.impl}  {r.vector}"]
+    if r.ran and r.reason:
+        out.append(f"  run {r.reason}")
     if not r.ran:
         out.append(f"  adapter did not produce output (exit {r.returncode})")
         if r.stderr.strip():
@@ -490,7 +490,7 @@ def _byte_line(bd: ByteDiff) -> str:
 
 def build_result(
     *, impl: str, vector: str, phase: str, ran: bool, returncode: int, stderr: str,
-    expected: bytes, actual: bytes,
+    expected: bytes, actual: bytes, reason: str = "",
 ) -> ExplainResult:
     """Assemble an :class:`ExplainResult` from ground truth and produced bytes.
 
@@ -499,7 +499,7 @@ def build_result(
     """
     return ExplainResult(
         impl=impl, vector=vector, phase=phase, ran=ran, returncode=returncode, stderr=stderr,
-        expected=expected, actual=actual,
+        expected=expected, actual=actual, reason=reason,
         byte_diff=diff_bytes(expected, actual),
         decoder=diff_decoder(expected, actual) if phase == "decoder" and ran else None,
     )
@@ -520,12 +520,12 @@ class ResolvedVector:
     expected_path: Path
 
 
-# phase -> (input subdir, input suffix, output subdir, output suffix, contract verb)
+# phase -> (input subdir, input suffix, output subdir, output suffix, codec verb)
 _PHASE_PATHS = {
     "encoder": ("encoder_input", ".raw+config", "encoder_output", ".124",
-                "conformance-compress"),
+                "compress"),
     "decoder": ("decoder_input", ".124+config", "decoder_output", ".raw+large_f",
-                "conformance-decompress"),
+                "decompress"),
 }
 
 

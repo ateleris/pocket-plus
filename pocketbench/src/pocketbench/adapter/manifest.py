@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _VAR = re.compile(r"\$\{([^}]+)\}")
+COMMANDS = ("build", "validate", "bench", "profile", "conformance", "explain", "sweep")
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,13 @@ class Manifest:
     dir: Path                # absolute adapter directory (where adapter.toml lives)
     example: bool = False    # True => a test double, excluded from real runs but still
     #                          returned by discover_adapters so the unit tests can build it.
+    # Commands whose default and glob selection leave this adapter out; naming it still runs it.
+    skip_commands: tuple[str, ...] = ()
+
+    @property
+    def size_specialized(self) -> bool:
+        """The build compiles in the packet size, so bench rebuilds it per dataset size group."""
+        return self.build is not None and "{max_packet_bits}" in self.build
 
 
 def load_manifest(adapter_dir: Path) -> Manifest:
@@ -39,6 +47,11 @@ def load_manifest(adapter_dir: Path) -> Manifest:
     entrypoint = data.get("entrypoint")
     if not entrypoint:
         raise ValueError(f"{adapter_dir}/adapter.toml: 'entrypoint' is required")
+    skip = tuple(data.get("skip_commands", ()))
+    unknown = [c for c in skip if c not in COMMANDS]
+    if unknown:
+        raise ValueError(f"{adapter_dir}/adapter.toml: unknown skip_commands {unknown}; "
+                         f"known: {', '.join(COMMANDS)}")
     return Manifest(
         name=data.get("name", adapter_dir.name),
         language=data.get("language"),
@@ -49,6 +62,7 @@ def load_manifest(adapter_dir: Path) -> Manifest:
         version_cmd=data.get("version_cmd"),
         dir=adapter_dir,
         example=bool(data.get("example", False)),
+        skip_commands=skip,
     )
 
 

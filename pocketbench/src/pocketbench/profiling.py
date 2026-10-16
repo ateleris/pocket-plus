@@ -10,16 +10,16 @@ in-process bench for timing.
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from pocketbench import adapter
-from pocketbench.adapter import Params
+from pocketbench import adapter, records
 from pocketbench.config import Dataset
-from pocketbench.orchestrate import Prepared
+from pocketbench.orchestrate import Prepared, dataset_input
 
 TIME_BIN = "/usr/bin/time"
 _MAXRSS = re.compile(r"Maximum resident set size \(kbytes\):\s*(\d+)")
@@ -67,26 +67,25 @@ def profile(
     if workdir.exists():
         shutil.rmtree(workdir)
     workdir.mkdir(parents=True)
-    params = Params(
-        packet_bits=dataset.packet_bits, pt=dataset.pt, ft=dataset.ft,
-        rt=dataset.rt, robustness=dataset.robustness,
-    )
+    data, _ = dataset_input(dataset)
+    inp = workdir / "in.rec"
+    inp.write_bytes(data)
     input_bytes = dataset.input.stat().st_size
 
-    packet = workdir / "out.pkt"
-    c_argv = adapter.oneshot_argv(p.adapter, "compress", params, dataset.input, packet)
-    rss_c = _profile_op(c_argv, workdir, packet, runs, timeout)
-    output_bytes = packet.stat().st_size
+    packets = workdir / "packets.rec"
+    c_argv = adapter.verb_argv(p.adapter, "compress", inp, packets)
+    rss_c = _profile_op(c_argv, workdir, packets, runs, timeout)
+    output_bytes = len(records.to_124(records.decode(packets.read_bytes())))
 
-    depkt = workdir / "out.depkt"
-    d_argv = adapter.oneshot_argv(p.adapter, "decompress", params, packet, depkt)
-    rss_d = _profile_op(d_argv, workdir, depkt, runs, timeout)
+    fields = workdir / "fields.rec"
+    d_argv = adapter.verb_argv(p.adapter, "decompress", packets, fields)
+    rss_d = _profile_op(d_argv, workdir, fields, runs, timeout)
+    decoded = sum(len(r.payload) for r in records.decode(fields.read_bytes()).records)
 
     return [
         ProfileResult(p.name, dataset.name, "compress", input_bytes, output_bytes,
                       input_bytes / output_bytes if output_bytes else None, rss_c, runs),
-        ProfileResult(p.name, dataset.name, "decompress", output_bytes,
-                      depkt.stat().st_size, None, rss_d, runs),
+        ProfileResult(p.name, dataset.name, "decompress", output_bytes, decoded, None, rss_d, runs),
     ]
 
 
@@ -103,14 +102,21 @@ def _profile_op(
 
 
 def _run_timed(argv: list[str], workdir: Path, timeout: int) -> int:
-    """Run ``argv`` under time -v; return peak RSS in bytes."""
-    proc = subprocess.run(
-        [TIME_BIN, "-v", *argv],
-        cwd=workdir,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
+    """Run ``argv`` under time -v; return peak RSS in bytes. A run that stopped early is an error."""
+    try:
+        proc = subprocess.run(
+            [TIME_BIN, "-v", *argv], cwd=workdir, capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"{argv[0]} timed out after {timeout} s") from None
     if proc.returncode != 0:
         raise RuntimeError(f"{argv[0]} failed (exit {proc.returncode})\n{proc.stderr.strip()}")
+    try:
+        summary = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        summary = None
+    if not isinstance(summary, dict):
+        raise RuntimeError(f"{argv[0]} printed no summary")
+    if summary.get("stopped_at") is not None:
+        raise RuntimeError(f"{argv[0]} stopped: {summary['error']}")
     return parse_max_rss(proc.stderr)

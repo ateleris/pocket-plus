@@ -1,6 +1,5 @@
 """Validation tests: pure verdict logic + orchestration against the mock adapter."""
 
-from dataclasses import replace
 from pathlib import Path
 
 from pocketbench import adapter
@@ -11,45 +10,44 @@ from pocketbench.orchestrate import Prepared
 from pocketbench.validate import cross_impl_verdict, sha256
 
 REPO = Path(__file__).resolve().parents[1]
+ORIGINAL = b"ORIGINAL-DATA!!!"
 
 
-def _prepared_mock(reference_conformant: bool = True) -> Prepared:
+def _prepared_mock() -> Prepared:
     found = discover_adapters(REPO / "adapters", repo_root=REPO, variables={})
     (mock,) = [d for d in found if d.manifest.name == "mock"]
-    caps = adapter.capabilities(mock)
-    return Prepared(adapter=mock, capabilities=replace(caps, reference_conformant=reference_conformant))
+    return Prepared(adapter=mock, capabilities=adapter.capabilities(mock))
 
 
-def _dataset(tmp_path, *, expected: Path | None) -> Dataset:
+def _dataset(tmp_path, *, expected: bytes | None) -> Dataset:
     inp = tmp_path / "in.bin"
-    inp.write_bytes(b"ORIGINAL-DATA!!!")
-    return Dataset(name="d", input=inp, expected=expected, packet_bits=8,
-                   pt=1, ft=1, rt=1, robustness=1)
+    inp.write_bytes(ORIGINAL)
+    exp = None
+    if expected is not None:
+        exp = tmp_path / "exp.pkt"
+        exp.write_bytes(expected)
+    return Dataset(name="d", input=inp, expected=exp, packet_bits=8, pt=1, ft=1, rt=1, robustness=1)
 
 
-def test_roundtrip_and_reference_pass_for_identity_codec(tmp_path):
-    # Mock copies input -> packet, so an "expected" file equal to the input matches.
-    expected = tmp_path / "exp.pkt"
-    expected.write_bytes(b"ORIGINAL-DATA!!!")
-    ds = _dataset(tmp_path, expected=expected)
-    results = validate_mod.validate([_prepared_mock()], [ds], workdir=tmp_path / "wd")
-    checks = {(r.impl, r.check): r for r in results}
+def _checks(tmp_path, expected):
+    results = validate_mod.validate([_prepared_mock()], [_dataset(tmp_path, expected=expected)],
+                                    workdir=tmp_path / "wd")
+    return {(r.impl, r.check): r for r in results}
+
+
+def test_identity_codec_passes_every_check_when_expected_equals_input(tmp_path):
+    # The identity codec's packets are its fields, so an expected .pkt equal to the input matches.
+    checks = _checks(tmp_path, ORIGINAL)
     assert checks[("mock", "round-trip")].passed
     assert checks[("mock", "reference")].passed
     assert checks[("*", "cross-impl")].passed
 
 
-def test_non_conformant_gets_roundtrip_only(tmp_path):
-    expected = tmp_path / "exp.pkt"
-    expected.write_bytes(b"DOES-NOT-MATTER")
-    ds = _dataset(tmp_path, expected=expected)
-    results = validate_mod.validate(
-        [_prepared_mock(reference_conformant=False)], [ds], workdir=tmp_path / "wd"
-    )
-    checks = {(r.impl, r.check): r for r in results}
+def test_every_impl_gets_the_reference_check(tmp_path):
+    checks = _checks(tmp_path, b"SOMETHING-ELSE!!")
     assert checks[("mock", "round-trip")].passed
-    assert ("mock", "reference") not in checks  # skipped: not reference-conformant
-    assert ("*", "cross-impl") not in checks  # no conformant impl contributed a hash
+    assert not checks[("mock", "reference")].passed
+    assert not checks[("*", "cross-impl")].passed
 
 
 def test_sha256_of_file(tmp_path):

@@ -7,6 +7,10 @@ edition = "2021"
 name = "adapter"
 path = "src/main.rs"
 
+[features]
+block32 = ["pocketrust/block32"]
+block64 = ["pocketrust/block64"]
+
 [dependencies]
 pocketrust = { path = "../../../pocketrust" }
 pocketbench-adapter = { path = "../common/rust/pocketbench-adapter" }

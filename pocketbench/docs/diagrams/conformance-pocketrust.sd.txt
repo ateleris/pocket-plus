@@ -1,0 +1,226 @@
+title pocket-bench conformance --impl pocketrust --mode both
+
+actor "User" as user
+
+participantgroup #lightblue **Python: pocketbench core**
+participant "cli.py\nconformance()" as cli
+participant "api.py\nPocketBench" as api
+participant "orchestrate.py" as orch
+participant "conformance.py" as conf
+participant "worker thread\n(ThreadPoolExecutor)" as wk
+participant "records.py" as rec
+participant "adapter/driver.py" as drv
+end
+
+participantgroup #moccasin **Rust process (one per vector): adapters/pocketrust/target/release/adapter**
+participant "pocketbench_adapter\n(adapters/common/rust/lib.rs)" as plumb
+participant "adapters/pocketrust\nmain.rs: impl Codec" as adp
+end
+
+participantgroup #lightgreen **Rust: pocketrust crate (the codec)**
+participant "CompressorContext" as enc
+participant "DecompressorContext\n+ check_frame" as dec
+end
+
+user->cli: uv run pocket-bench conformance --impl pocketrust --mode both [--jobs N] [--limit N]
+
+== Setup ==
+
+cli->api: _load(config) => PocketBench(config, on_progress, on_message)
+alt config missing or load fails
+api-->cli: raise ConfigError
+cli-->user: print red, exit 2
+end
+cli->api: pb.conformance(impl, mode, build, limit, jobs,\nresults_dir=settings.results_dir)
+
+alt mode not in encoder / decoder / both
+api-->cli: raise ConformanceUnavailable
+cli-->user: exit 2
+else config.conformance_suite is None (no conformance dataset discovered)
+api-->cli: raise ConformanceUnavailable
+cli-->user: exit 2
+else suite.data_dir does not exist
+api-->cli: raise ConformanceUnavailable
+cli-->user: exit 2
+end
+
+api->conf: load_manifest(suite.manifest)
+note over conf: file_list.csv => {"/encoder_output/x.124": (size, sha256), ...}
+conf-->api: manifest dict
+
+api->orch: _prepare() => prepare_impls(select_impls(["pocketrust"]),\nexplicit=True, build, max_packet_bits=None)
+ref over orch,drv: same as bench: select_impls (unknown name: SelectionError, exit 2),\ndriver.build => cargo build --release / entrypoint_present (fail: ImplUnavailable, exit 1),\ndriver.capabilities => adapter capabilities => Pocketrust.caps()
+orch-->api: [Prepared(pocketrust)]
+
+== Sweep ==
+
+api->conf: run(p, data_dir, manifest, mode, results_file=results/conformance-pocketrust.txt,\nlimit, on_progress, jobs)
+conf->conf: TemporaryDirectory + ThreadPoolExecutor(max_workers = jobs or cpu_count)
+
+loop phase in (encoder, decoder)
+conf->conf: inputs = sorted(glob encoder_input/*.raw+config | decoder_input/*.124+config)[:limit]
+
+loop pool.map(check, inputs): up to jobs vectors at once, results in input order
+conf->wk: check(input_file)
+wk->wk: out_name = stem + ".124" | ".raw+large_f";\nworkdir = mkdtemp(dir=tmp)
+wk->conf: _failure(p, phase, input_file, workdir,\nmanifest.get(csv_subdir + out_name), timeout=60)
+
+alt no manifest entry
+conf-->wk: "no manifest entry"
+end
+
+conf->conf: run_vector(p, phase, input_file, workdir, timeout)
+alt phase = encoder
+conf->rec: from_raw_config(bytes)
+note over rec: BE32 F, record 0 = initial mask,\nthen per packet: flag byte + field.\nCopies bytes, judges nothing.
+else phase = decoder
+conf->rec: from_124_config(bytes)
+note over rec: header F = 0 (codec discovers it);\nper element: lost (kind bit 0) or BE32 bits + packet;\ncut-off length field => empty packet
+end
+conf->rec: encode(container) => workdir/vector.rec
+conf->drv: run_verb(d, "compress" | "decompress", vector.rec, output.rec, timeout=60)
+drv->drv: unlink(output.rec), verb_argv() (no --warmup / --iterations)
+drv->plumb: subprocess.run(adapter VERB --in=vector.rec --out=output.rec)
+
+plumb->plumb: run() => cmd_verb() => parse_args() => fs::read() => parse_container()
+alt contract violation (bad flags, malformed container)
+plumb-->drv: exit 2
+end
+
+alt verb = compress (encoder vector)
+plumb->plumb: compress_pass() (exactly one pass)
+plumb->adp: enc_create(f, records.first())
+alt F > 65535 or mask length != ceil(F/8)
+adp-->plumb: Err(NotRepresentable) => stopped_at = 0
+end
+adp->enc: CompressorContext::init(f)
+adp->enc: set_initial_mask(words)
+alt mask bits past F
+enc-->adp: Err(PaddingNotZero)
+adp-->plumb: Err(Codec) => stopped_at = 0
+end
+loop each packet record i >= 1
+plumb->adp: enc_packet(state, flag, field, out)
+adp->enc: compress(field, R, new_mask, send_mask, uncompressed, ...)
+alt R outside 0..=7 (r_range vectors)
+enc-->adp: Err(RobustnessOutOfRange)
+else init-phase flags violate 3.3.2 (init_phase vectors)
+enc-->adp: Err(InitPhaseFlags)
+else field padding bits set (field_padding vectors)
+enc-->adp: Err(PaddingNotZero)
+end
+enc-->adp: Ok((pos, idx))
+adp-->plumb: Ok(bits) or Err(HookError)
+alt Err
+plumb->plumb: stopped_at = i, error = e, break\n(packets written so far stay in the output)
+end
+end
+
+else verb = decompress (decoder vector)
+plumb->plumb: decompress_pass() (exactly one pass)
+plumb->adp: dec_create(f = 0, records)
+adp->dec: DecompressorContext::init() (F unknown)
+loop each record i
+alt kind & 1 (lost)
+plumb->adp: dec_lost(state)
+alt discovered_f() is Some
+adp->dec: notify_packet_loss(1)
+else F not yet locked
+note over adp: ignored: the robustness window\nonly advances once F is locked
+end
+plumb->plumb: write status LOST (0x02)
+else received
+plumb->adp: dec_packet(state, data, declared, avail, out)
+adp->dec: check_frame(declared, data.len()*8)
+alt length 0, > 622,627 bits, or past the data (length / truncation vectors)
+dec-->adp: Err(FrameError)
+adp-->plumb: Err(Codec) => stopped_at = i, break
+end
+adp->dec: decompress(words, 0, 0, avail, field, scratch)
+alt F not known yet
+dec->dec: discover_at(input, ...)
+alt Discovery::Strict(f)
+dec->dec: clone state, set_f(f), recursive decompress;\nrestore clone unless Guaranteed
+else Discovery::Weak{f, vt}
+dec->dec: clone, set_f(f), tentative decompress_internal, restore clone;\nunless mask reject: set_f(f) + notify_packet_undecodable()
+dec-->adp: Unguaranteed
+else Discovery::None
+dec-->adp: Unguaranteed
+end
+end
+dec->dec: decompress_internal() (None => push_status(0x01), Unguaranteed),\nvt_gap_ok(), mask checks, push_status()
+alt Guaranteed
+adp->dec: discovered_f().expect("a Guaranteed decode locks F")
+adp-->plumb: Ok((DECODED 0x00, F)) + field bytes
+else Unguaranteed
+adp-->plumb: Ok((FAILED 0x01, 0))
+end
+end
+end
+plumb->adp: dec_trailer_f(state) => discovered_f().unwrap_or(0)
+plumb->plumb: write trailer F into the container header
+end
+
+plumb->plumb: fs::write(--out), println summary JSON\n{records_in, records_out, stopped_at, error}
+alt OutputFull
+plumb-->drv: exit 1
+else panic in adapter or codec
+plumb-->drv: exit 101 + panic text on stderr
+else killed by a signal
+plumb-->drv: returncode = -N
+else
+plumb-->drv: exit 0 (even when a hook error stopped the pass)
+end
+
+alt TimeoutExpired (> 60 s)
+drv->drv: VerbRun(returncode=None)
+end
+drv->drv: json.loads(stdout) => summary
+drv->rec: decode(output.rec)
+alt ValueError
+drv->drv: output_error = str(exc)
+end
+drv-->conf: VerbRun(returncode, stderr, summary, output)
+
+alt run.output is not None
+alt encoder
+conf->rec: to_124(output) => packets back to back
+else decoder
+conf->rec: to_raw_large_f(output) => status byte (+ field after 0x00) per element, BE32 trailer F
+end
+end
+conf->conf: VectorRun(run, data)
+
+alt len(data) == expected size and sha256(data) == expected hash
+conf-->wk: None (pass)
+note over conf: a run stopped by a codec error still PASSES\nwhen the bytes it wrote match the manifest
+else
+conf->drv: run.reason
+note over drv: reason, first match wins:\ntimeout | crashed: signal N | exit N: first stderr line\n| malformed output: ... | no output written\n| no summary printed | stopped: ERROR | ok
+drv-->conf: reason
+conf-->wk: "mismatch" if reason == "ok" else reason
+end
+wk->wk: finally: shutil.rmtree(workdir)
+wk-->conf: (out_name, reason or None)
+conf->conf: total += 1; passed += 1 or failed += 1, reasons[out_name] = reason
+opt every 1000 vectors
+conf->cli: on_progress(phase, i, len(inputs))
+end
+end
+end
+
+conf->conf: failures = sorted(reasons)
+conf->conf: _write_log(result) => results/conformance-pocketrust.txt\n(counts + "name  reason" per failure)
+conf-->api: ConformanceResult(total, passed, failed, failures, reasons)
+alt RuntimeError raised inside run()
+api->cli: on_message(str(exc)), impl has no result
+end
+api-->cli: ConformanceRun(results, mode)
+
+== Report ==
+
+alt run.results empty
+cli-->user: "No implementations selected.", exit 1
+end
+cli-->user: table Implementation / Total / Passed / Failed,\n"full log => results/conformance-pocketrust.txt"
+note over cli: exit 0 regardless of failed vectors:\nconformance reports, it does not grade

@@ -26,3 +26,9 @@ results_dir = "../results"
 # this commented out unless you run the `conformance` command: with it set to a path that does not
 # exist, the suite still loads and `conformance` fails on the missing files instead of skipping.
 # conformance_data_dir = "/path/to/ccsds124_full_crossvalidation"
+# Prepared ESA one-week in-flight HKTM (input/, expected-output/) for the hktm-1week datasets.
+# Licensed and machine-local; leave commented out and those datasets are skipped.
+# hktm_1week_dir = "/path/to/ccsds_1week-prepared"
+# Adapters kept outside this repo (machine-local implementations that must not be committed),
+# discovered like adapters/<name>/. Leave commented out unless you have such adapters.
+# local_adapters_dir = "/path/to/local-adapters"

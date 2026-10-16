@@ -36,6 +36,7 @@ adapters/common/rust/*/Cargo.lock
 
 # data placed inside a datasets/ folder is not committed; keep only dataset.toml
 datasets/*/data/
+datasets/synthetic-hk-f32912/
 
 # never commit the licensed UAB/CNES yellow book vectors
 conformance-data/

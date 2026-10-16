@@ -1,0 +1,6 @@
+name        = "pocketplus"
+language    = "C (pocketplus GenC)"
+source      = "../pocketplus"
+build       = "make SOURCE={source}"
+entrypoint  = "build/adapter"
+version_cmd = "gcc --version"

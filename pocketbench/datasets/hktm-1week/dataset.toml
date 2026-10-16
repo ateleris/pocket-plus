@@ -1,0 +1,8 @@
+# One week of ESA in-flight housekeeping telemetry: one file of fixed-length CCSDS packets
+# (primary + PUS secondary header included) per report, 70 reports of 20 to 508 bytes. Licensed and
+# machine-local, so `source` is the prepared folder set as `[settings] hktm_1week_dir`; without it
+# this dataset is skipped. Expected .pkt from pocketrust at pt=10, ft=20, rt=50, R=1.
+#
+# A collection: one dataset per `expected-output/<stem>-metadata.json`, named `hktm-1week-<stem>`.
+kind   = "reference"
+source = "${hktm_1week_dir}"
