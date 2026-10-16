@@ -1,0 +1,11 @@
+[package]
+name = "pocketrust"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+block32 = []
+block64 = []
+trace = []
+
+[dependencies]

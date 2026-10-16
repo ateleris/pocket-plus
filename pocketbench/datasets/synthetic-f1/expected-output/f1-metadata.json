@@ -1,0 +1,31 @@
+{
+  "name": "f1",
+  "generated_at": "2026-07-24T00:00:00Z",
+  "input": {
+    "file": "f1.bin",
+    "size": 1024,
+    "md5": "f66248979b657531200cb0e300e8db04",
+    "type": "synthetic"
+  },
+  "compression": {
+    "packet_length": 1,
+    "packet_bits": 1,
+    "parameters": {
+      "pt": 8,
+      "ft": 16,
+      "rt": 32,
+      "robustness": 1
+    }
+  },
+  "output": {
+    "compressed": {
+      "file": "f1.bin.pkt",
+      "size": 1122,
+      "md5": "da9d0c9fb65c7295d3bfd20a37a858f2"
+    }
+  },
+  "results": {
+    "compression_ratio": 0.91,
+    "roundtrip_verified": true
+  }
+}

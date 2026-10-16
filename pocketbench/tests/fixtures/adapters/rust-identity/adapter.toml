@@ -1,0 +1,5 @@
+name       = "rust-identity"
+language   = "Rust"
+build      = "cargo build --release"
+entrypoint = "target/release/adapter"
+example    = true

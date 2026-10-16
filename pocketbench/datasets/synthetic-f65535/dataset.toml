@@ -1,0 +1,9 @@
+# A single hand-generated vector whose packet field width is F = 65535 bits (2^16 - 1), the
+# standard's maximum, so each packet is an 8192-byte stride ending in one padding bit. Not a
+# ccsds124 reference vector: its expected .pkt was produced with the reference-c codec.
+#
+# `kind` names the LOADER, so "reference" here means "params read from the vector's
+# *-metadata.json", not that this belongs to the reference set. With `vector` set it is one dataset
+# named after the folder rather than a collection. No `source`: the data is in this folder.
+kind   = "reference"
+vector = "f65535"

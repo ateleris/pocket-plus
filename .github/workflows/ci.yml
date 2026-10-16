@@ -20,6 +20,9 @@ jobs:
           - os: windows-latest
             platform: win
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: pocketplus
     steps:
       - uses: actions/checkout@v4
 
@@ -28,8 +31,8 @@ jobs:
       - uses: actions/cache@v4
         if: runner.os == 'Linux'
         with:
-          path: build/.stainless-cache
-          key: stainless-vc-cache-${{ matrix.os }}-${{ hashFiles('scala/PocketPlus.scala') }}
+          path: pocketplus/build/.stainless-cache
+          key: stainless-vc-cache-${{ matrix.os }}-${{ hashFiles('pocketplus/scala/PocketPlus.scala') }}
           restore-keys: stainless-vc-cache-${{ matrix.os }}-
 
       # The JVM args used for GenC/verification (--sun-misc-unsafe-memory-access) need JDK 23+.
@@ -60,7 +63,7 @@ jobs:
         run: pip install -r python/requirements.txt
 
       - name: Run tests
-        working-directory: python
+        working-directory: pocketplus/python
         run: pytest -m "not verify"
 
       # Linux-only (verification is slow, and one OS gives enough signal). Allowed to
@@ -68,5 +71,5 @@ jobs:
       - name: Run Stainless verification gate
         if: runner.os == 'Linux'
         continue-on-error: true
-        working-directory: python
+        working-directory: pocketplus/python
         run: pytest -m verify

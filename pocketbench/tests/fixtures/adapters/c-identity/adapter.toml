@@ -1,0 +1,5 @@
+name       = "c-identity"
+language   = "C"
+build      = "make"
+entrypoint = "build/adapter"
+example    = true
