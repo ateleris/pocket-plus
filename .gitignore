@@ -18,7 +18,7 @@ native/build/
 *.obj
 *.ilk
 
-# --- GenC output (regenerated from scala/PocketPlus.scala on build) ---
+# --- GenC output (regenerated from scala/src/main/scala/pocket/PocketPlus.scala on build) ---
 native/generated/pocketplus.c
 native/generated/pocketplus.h
 
@@ -41,3 +41,21 @@ python/env/
 !/data/README.md
 /.stainless-cache
 /TestResults
+
+
+**/.scala-build
+**/.metals
+**/.bsp
+**/.bloop
+**/.stainless-cache
+**/.vscode
+**/smt_out
+**/.DS_Store
+stainless-stack-trace.txt
+**/target
+**/*.log
+**/.venv/*
+**/.jvmopts
+**/lib
+*.sc
+**/stainless/
