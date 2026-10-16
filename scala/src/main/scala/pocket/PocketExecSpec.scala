@@ -8,6 +8,11 @@ import Utils.*
 
 object PocketExecSpec {
 
+  /** Whether a D_t vector represents "no change" (all bits zero). Named (rather than an inline
+    * lambda) so every `takeWhile(isAllZero)` call site refers to the exact same function value for easier 
+    * verification. */
+  def isAllZero(dv: List[Boolean]): Boolean = dv.forall(b => b == false)
+
   def paramsInvariant(t: BigInt, f: BigInt, m0: List[Boolean], robustnessT: BigInt, pts: List[Boolean], ft: Boolean, rt: Boolean, ct: BigInt, itMinusOne: List[Boolean], btMinusOne: List[Boolean], mtMinusOne: List[Boolean], dts: List[List[Boolean]]): Boolean = {
       (t >= 0)
       && (1 <= f && f <= BasicEncodingFunctions.MAX_F)
@@ -17,6 +22,9 @@ object PocketExecSpec {
       && (if t <= robustnessT then rt == true else true) // when t <= robustnessT, the uncompressed flag must be true, otherwise, the flag is user defined (bluebook section 3.3.2)
       && (if t <= robustnessT + ct then pts.size == t + 1 else pts.size == robustnessT + ct + 1) // pts is the history of the previous "R_t + C_t"s and the current pt, and therefore must be updated at every time step.
       && (0 <= ct && ct <= min(t, 15) - robustnessT)
+      // ct is the number of consecutive all-zero D_t's, starting right after the robustnessT
+      // window and counting backwards in time (dts is newest-first).
+      && (ct == dts.drop(robustnessT).takeWhile(isAllZero).size)
       && (itMinusOne.size == f)
       && (btMinusOne.size == f && (if t == 0 then btMinusOne == build0(f) else true))
       && (mtMinusOne.size == f && (if t == 0 then mtMinusOne == m0 else true))
@@ -125,7 +133,7 @@ object PocketExecSpec {
     val newDts = consDts.take(min(tNext, 15))
     assert(newDts.size <= min(tNext, 15))
     assert(newDts.size <= 15)
-    val nextCt = newDts.drop(params.robustnessT).takeWhile(dv => dv.forall(b => b == false)).size
+    val nextCt = newDts.drop(params.robustnessT).takeWhile(isAllZero).size
     assert(nextCt >= 0 && nextCt <= 15)
     assert(nextCt >= 0 && nextCt <= 15 - params.robustnessT)
     assert(0 <= params.robustnessT + nextCt && params.robustnessT + nextCt <= 15)
@@ -141,12 +149,31 @@ object PocketExecSpec {
       assert(0 <= params.robustnessT && params.robustnessT <= 7)
       assert(if tNext <= params.robustnessT then nextFt == true else true)
       assert(if tNext <= params.robustnessT then nextRt == true else true)
-      if tNext <= params.robustnessT + nextCt then
 
-        assert(ptsCandidate.size >= tNext + 1)
-        assert(newPts.size == tNext + 1) // TODO
+      // nextCt (C_t for the new step) can increase by at most 1 over params.ct (C_t for the old
+      // step): newDts is just params.dts with one entry pushed on (dvect) and possibly the oldest
+      // entry dropped, so the leading all-zero run counted by params.ct can only grow by the one
+      // new entry, or shrink/reset — never jump by more than that in a single step.
+      assert(params.ct == params.dts.drop(params.robustnessT).takeWhile(isAllZero).size)
+      ListUtils.lemmaTakeDropTakeWhileSizeLe(consDts, min(tNext, 15), params.robustnessT, isAllZero)
+      assert(consDts.take(min(tNext, 15)).drop(params.robustnessT).takeWhile(isAllZero).size
+        <= consDts.drop(params.robustnessT).takeWhile(isAllZero).size)
+      ListUtils.lemmaConsDropTakeWhileSizeDelta(dvect, params.dts, params.robustnessT, isAllZero)
+      assert(consDts.drop(params.robustnessT).takeWhile(isAllZero).size
+        <= params.dts.drop(params.robustnessT).takeWhile(isAllZero).size + 1)
+      assert(nextCt <= params.ct + 1)
+
+      if tNext <= params.robustnessT + nextCt then
+        // branch condition + nextCt <= params.ct + 1 forces the old state to NOT have been capped
+        // (params.t <= params.robustnessT + params.ct): otherwise params.robustnessT + nextCt <=
+        // params.robustnessT + params.ct + 1 <= params.t < tNext, contradicting the branch itself.
+        assert(params.t <= params.robustnessT + params.ct)
+        assert(params.pts.size == params.t + 1)
+        assert(ptsCandidate.size == tNext + 1)
+        assert(newPts.size == tNext + 1)
       else
-        assert(newPts.size == params.robustnessT + nextCt + 1) // TODO
+        assert(ptsCandidate.size >= params.robustnessT + nextCt + 1)
+        assert(newPts.size == params.robustnessT + nextCt + 1)
       assert(0 <= nextCt && nextCt <= min(tNext, 15) - params.robustnessT)
       assert(it.size == params.f)
       assert(bt.size == params.f && (if tNext == 0 then bt == build0(params.f) else true))
@@ -892,4 +919,65 @@ object ListUtils {
     }
 
   }.ensuring(_ => (l1 ++ l2).splitAtIndex(index) == (l1, l2))
+
+  /** `l.drop(n).drop(m) == l.drop(n + m)`, the standard drop-composition fact. */
+  @ghost @inlineOnce @opaque
+  def lemmaDropDrop[A](l: List[A], n: BigInt, m: BigInt): Unit = {
+    require(n >= 0 && m >= 0)
+    decreases(l)
+    l match {
+      case Nil() => ()
+      case Cons(h, t) =>
+        if n > 0 then {
+          lemmaDropDrop(t, n - 1, m)
+          assert(t.drop(n - 1).drop(m) == t.drop(n - 1 + m))
+        } else ()
+    }
+  }.ensuring(_ => l.drop(n).drop(m) == l.drop(n + m))
+
+  @ghost @inlineOnce @opaque
+  def lemmaTakeTakeWhileSizeLe[A](l: List[A], k: BigInt, p: A => Boolean): Unit = {
+    decreases(l)
+    l match {
+      case Nil() => ()
+      case Cons(h, t) =>
+        if k <= 0 then ()
+        else if p(h) then {
+          lemmaTakeTakeWhileSizeLe(t, k - 1, p)
+          assert(t.take(k - 1).takeWhile(p).size <= t.takeWhile(p).size)
+        } else ()
+    }
+  }.ensuring(_ => l.take(k).takeWhile(p).size <= l.takeWhile(p).size)
+
+  @ghost @inlineOnce @opaque
+  def lemmaTakeDropTakeWhileSizeLe[A](l: List[A], n: BigInt, r: BigInt, p: A => Boolean): Unit = {
+    require(n >= 0 && r >= 0)
+    decreases(l)
+    l match {
+      case Nil() => ()
+      case Cons(h, t) =>
+        if n <= 0 then ()
+        else if r <= 0 then lemmaTakeTakeWhileSizeLe(l, n, p)
+        else {
+          lemmaTakeDropTakeWhileSizeLe(t, n - 1, r - 1, p)
+          assert(t.take(n - 1).drop(r - 1).takeWhile(p).size <= t.drop(r - 1).takeWhile(p).size)
+        }
+    }
+  }.ensuring(_ => l.take(n).drop(r).takeWhile(p).size <= l.drop(r).takeWhile(p).size)
+
+  @ghost @inlineOnce @opaque
+  def lemmaConsDropTakeWhileSizeDelta[A](x: A, l: List[A], r: BigInt, p: A => Boolean): Unit = {
+    require(r >= 0)
+    if r > 0 then {
+      lemmaDropDrop(l, r - 1, 1)
+      assert(l.drop(r - 1).drop(1) == l.drop(r))
+      l.drop(r - 1) match {
+        case Nil() =>
+          assert(l.drop(r) == Nil[A]())
+        case Cons(h, t) =>
+          assert(Cons(h, t).drop(1) == t)
+          assert(l.drop(r) == t)
+      }
+    } else ()
+  }.ensuring(_ => Cons(x, l).drop(r).takeWhile(p).size <= l.drop(r).takeWhile(p).size + 1)
 }
