@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,13 @@ from pocketbench import cli
 from pocketbench.api import BenchRun, PocketBenchError, SweepRun
 from pocketbench.benchmark import BenchMetrics
 from pocketbench.sweep import SweepResult
+
+# Typer forces colored output when GITHUB_ACTIONS / FORCE_COLOR is set, splitting matched text.
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(output: str) -> str:
+    return _ANSI.sub("", output)
 
 
 class _Named:
@@ -67,7 +75,7 @@ def bench_output(monkeypatch):
     def run(*flags: str) -> str:
         result = CliRunner().invoke(cli.app, ["bench", *flags], env={"COLUMNS": "200"})
         assert result.exit_code == 0, result.output
-        return result.output
+        return _plain(result.output)
 
     return run
 
@@ -98,7 +106,7 @@ def test_bench_verbose_lists_the_selection(bench_output):
 
 @pytest.mark.parametrize("command", ["validate", "profile"])
 def test_commands_with_a_selection_take_verbose(command):
-    assert "--verbose" in CliRunner().invoke(cli.app, [command, "--help"]).output
+    assert "--verbose" in _plain(CliRunner().invoke(cli.app, [command, "--help"]).output)
 
 
 def test_bench_passes_the_time_budget_through(bench_output):
@@ -112,7 +120,7 @@ def _sweep(monkeypatch, *flags: str, exit_code: int = 0) -> str:
     monkeypatch.setattr(cli, "_load", lambda config: _CannedBench())
     result = CliRunner().invoke(cli.app, ["sweep", *flags], env={"COLUMNS": "200"})
     assert result.exit_code == exit_code, result.output
-    return result.output
+    return _plain(result.output)
 
 
 def test_sweep_passes_value_specs_through(monkeypatch):
