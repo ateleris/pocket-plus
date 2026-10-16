@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.10.2"
+VERSION="0.10.3"
 
 case "${1:-}" in
   linux)     platform="linux" ;;
