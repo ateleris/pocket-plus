@@ -219,7 +219,7 @@ object EncodingStep {
     val kt: List[Boolean] with kt.isEmpty || kt == yt = if vt == 0 || xt.forall(b => b == false) || yt.forall(b => b == false) then List[Boolean]() else yt
     val ct: List[Boolean] with ct.isEmpty || ct.size == 1 = if kt.isEmpty then List[Boolean]() else if !kt.isEmpty && !params.ptSetMoreThanOnceInHistory(vt + 1) then List(false) else List(true)
     val dt: Boolean = compDt(params)
-    val ht: List[Boolean] = BasicEncodingFunctions.runLengthEncode(xt) ++ BasicEncodingFunctions.encodeNBits(vt, 4, 16) ++ et ++ kt ++ ct ++ List(dt)
+    val ht: List[Boolean] = BasicEncodingFunctions.runLengthEncode(xt) ++ BasicEncodingFunctions.encodeNBits(vt, 4, BasicEncodingFunctions.pow2Fast(4)) ++ et ++ kt ++ ct ++ List(dt)
 
     // qt computation
     val qt: List[Boolean] = 
