@@ -197,6 +197,59 @@ object PocketExecSpec {
     res._2.rt == nextRt &&
     res._2.rt == nextRt
   )
+
+  /**
+    * Decompressor state at time step t. Unlike [[CompressionParameters]] it carries no user-specified
+    * parameter (M_0, R_t, p_t, f_t, r_t): the blue book guarantees they are all recoverable from the
+    * output vectors (section 3.1 and note of 3.3.2). Given F, the decompressor only needs the last
+    * reconstructed vector and a mask synchronized with the compressor's (section 2.1, a and b).
+    *
+    * @param t current time step, starting from 0
+    * @param f size of the vectors, in bits
+    * @param itMinusOne last reconstructed input vector, I_{t-1}
+    * @param mtMinusOne mask vector at time step t-1, M_{t-1}
+    */
+  case class DecompressionState(t: BigInt, f: BigInt, itMinusOne: List[Boolean], mtMinusOne: List[Boolean]) {
+    require(t >= 0 && 1 <= f && f <= BasicEncodingFunctions.MAX_F && itMinusOne.size == f && mtMinusOne.size == f)
+  }
+
+  /**
+    * The part of the compressor's state that the decompressor can track from the output vectors alone.
+    * The remaining fields cannot be recovered: p_t and B_{t-1} never reach the output (different
+    * histories can yield identical output vectors), and f_{t+1}, r_{t+1} are only known once o_{t+1}
+    * arrives.
+    */
+  def decoderView(params: CompressionParameters): DecompressionState = {
+    ghostExpr(params.lemmaInvariant())
+    DecompressionState(params.t, params.f, params.itMinusOne, params.mtMinusOne)
+  }
+
+  /**
+    * The decompressor is synchronized with the compressor when it holds the compressor's decoder view.
+    * At t = 0 only t and f must match: f_0 = r_0 = 1 (section 3.3.2), so the first output vector
+    * carries both the full mask and the uncompressed input.
+    */
+  def inSync(params: CompressionParameters, st: DecompressionState): Boolean = {
+    params.t == st.t && params.f == st.f && (params.t == 0 || decoderView(params) == st)
+  }
+
+  /**
+    * Mirror of [[encodingStep]]: consumes one output vector o_t from the front of `bits`, and returns
+    * the reconstructed input vector I_t, the state for step t+1, and the remaining bits (output vectors
+    * are concatenated without framing, section 2.2). Returns None if `bits` does not start with a
+    * well-formed output vector.
+    */
+  def decodingStep(st: DecompressionState, bits: List[Boolean]): Option[(List[Boolean], DecompressionState, List[Boolean])] = {
+    ??? : Option[(List[Boolean], DecompressionState, List[Boolean])]
+  }.ensuring(res => res match {
+    case Some((it, nextSt, rest)) =>
+      it.size == st.f &&
+      nextSt.t == st.t + 1 &&
+      nextSt.f == st.f &&
+      nextSt.itMinusOne == it &&
+      rest.size < bits.size
+    case None() => true
+  })
 }
 
 /**
