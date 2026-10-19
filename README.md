@@ -5,7 +5,7 @@ POCKET+ / CCSDS 124.0-B-1 lossless housekeeping-telemetry codec, formally specif
 in a small C ABI, and exercised from Python.
 
 ```
-scala/PocketPlus.scala   the single source of truth (Stainless-verifiable, GenC-compatible)
+scala/src/main/scala/pocket/PocketPlus.scala   the single source of truth (Stainless-verifiable, GenC-compatible)
 native/                  C project: GenC output + hand-written shared-library shim (pp_* API)
 python/                  Python project: ctypes interop + pytest round-trip suite
 tools/stainless/         Stainless toolchain (jar + z3 + cvc5) — downloaded by install.sh, git-ignored
@@ -34,7 +34,7 @@ Open `pocket-plus.slnx`. The first time, accept VS's prompt to create the virtua
 `python/requirements.txt` (or it is created automatically on first build).
 
 **Build Solution** in **Debug** or **Release**:
-  1. regenerates `native/generated/pocketplus.{c,h}` from `scala/PocketPlus.scala` (only when the
+  1. regenerates `native/generated/pocketplus.{c,h}` from `scala/src/main/scala/pocket/PocketPlus.scala` (only when the
      Scala changed — incremental),
   2. compiles `pocketplus.dll` with ClangCL,
   3. runs the Python `pytest` interop suite, excluding the slow `verify` test (a failing test fails

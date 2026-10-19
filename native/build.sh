@@ -10,13 +10,13 @@ repo="$(dirname "$here")"
 jar="$(echo "$repo"/tools/stainless/lib/stainless-dotty-standalone-*.jar)"
 [ -f "$jar" ] || { echo "Stainless jar not found; run ./install.sh first." >&2; exit 1; }
 
-scala_src="$repo/scala/PocketPlus.scala"
+scala_src="$repo/scala/src/main/scala/pocket/PocketPlus.scala"
 genc_c="$here/generated/pocketplus.c"
 jvm_args="-Xss512m --sun-misc-unsafe-memory-access=allow"
 
 if [ ! -f "$genc_c" ] || [ "$scala_src" -nt "$genc_c" ]; then
   echo "[GenC] PocketPlus.scala -> pocketplus.c"
-  (cd "$repo" && java $jvm_args -jar "$jar" --config-file=false --genc --genc-output="$genc_c" "$scala_src")
+  (cd "$repo" && java $jvm_args -jar "$jar" --config-file=false --genc --skip-verification --genc-output="$genc_c" "$scala_src")
   [ -f "$genc_c" ] || { echo "GenC did not produce $genc_c" >&2; exit 1; }
 fi
 
