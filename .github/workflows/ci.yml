@@ -22,16 +22,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
-      # Cache for the verification step below (Linux-only, like that step); VC results
-      # are content-addressed, so a stale cache still speeds up re-runs.
-      - uses: actions/cache@v4
-        if: runner.os == 'Linux'
-        with:
-          path: build/.stainless-cache
-          key: stainless-vc-cache-${{ matrix.os }}-${{ hashFiles('scala/src/main/scala/pocket/PocketPlus.scala') }}
-          restore-keys: stainless-vc-cache-${{ matrix.os }}-
-
       # The JVM args used for GenC/verification (--sun-misc-unsafe-memory-access) need JDK 23+.
       - uses: actions/setup-java@v4
         with:
