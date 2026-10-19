@@ -30,11 +30,11 @@ object Main {
     val dst = DecompressorState(f, Array.fill(f)(false), Array.fill(f)(false), 0)
     Decompressor.decompressorInit(dst)
 
-    // Encodes `it` under `params` via PocketExecSpec.encodingStep, decodes the packet with the
+    // Encodes `it` under `params` via EncodingStep.step, decodes the packet with the
     // array-based Decompressor, and returns the next step's parameters.
-    def step(label: String, params: CompressionParameters, it: List[Boolean],
-        nextPt: Boolean, nextFt: Boolean, nextRt: Boolean): CompressionParameters = {
-      val (packet, nextParams) = encodingStep(params, it, nextPt, nextFt, nextRt)
+    def step(label: String, params: CompressionState, it: List[Boolean],
+        nextPt: Boolean, nextFt: Boolean, nextRt: Boolean): CompressionState = {
+      val (packet, nextParams) = EncodingStep.step(params, it, nextPt, nextFt, nextRt)
 
       val packetArr = toArray(packet)
       val recovered = Array.fill(f)(false)
@@ -52,7 +52,7 @@ object Main {
     // t = 0: robustnessT = 0, so t <= robustnessT forces ft = rt = pts.head = true — the first
     // packet must always go out uncompressed so the decompressor can bootstrap.
     val it0 = List(true, false, true, false, false, false, true, true)
-    val params0 = CompressionParameters(
+    val params0 = CompressionState(
       t = 0, f = F, m0 = m0, robustnessT = 0, pts = List(true), ft = true, rt = true, ct = 0,
       itMinusOne = build0(F), btMinusOne = build0(F), mtMinusOne = m0, dts = Nil()
     )

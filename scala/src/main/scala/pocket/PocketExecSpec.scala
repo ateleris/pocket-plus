@@ -54,7 +54,7 @@ object PocketExecSpec {
     * @param mtMinusOne mask vector at time step t-1
     * @param dts "Robustness level"s last D_t (used to compute X_t during encoding). The head is them most recent element, and at most D_{t-1}. This is NOT a parameter but some state.
     */
-  case class CompressionParameters(t: BigInt, f: BigInt, m0: List[Boolean], robustnessT: BigInt, pts: List[Boolean], ft: Boolean, rt: Boolean, ct: BigInt, itMinusOne: List[Boolean], btMinusOne: List[Boolean], mtMinusOne: List[Boolean], dts: List[List[Boolean]]) {
+  case class CompressionState(t: BigInt, f: BigInt, m0: List[Boolean], robustnessT: BigInt, pts: List[Boolean], ft: Boolean, rt: Boolean, ct: BigInt, itMinusOne: List[Boolean], btMinusOne: List[Boolean], mtMinusOne: List[Boolean], dts: List[List[Boolean]]) {
     require(paramsInvariant(t, f, m0, robustnessT, pts, ft, rt, ct, itMinusOne, btMinusOne, mtMinusOne, dts))
 
     def ptSetMoreThanOnceInHistory(historyLength: BigInt): Boolean = {
@@ -68,6 +68,21 @@ object PocketExecSpec {
   }
 
   /**
+  * Decompressor state at time step t. Unlike [[CompressionState]] it carries no user-specified
+  * parameter (M_0, R_t, p_t, f_t, r_t): the blue book guarantees they are all recoverable from the
+  * output vectors (section 3.1 and note of 3.3.2). Given F, the decompressor only needs the last
+  * reconstructed vector and a mask synchronized with the compressor's (section 2.1, a and b).
+  *
+  * @param t current time step, starting from 0
+  * @param f size of the vectors, in bits
+  * @param itMinusOne last reconstructed input vector, I_{t-1}
+  * @param mtMinusOne mask vector at time step t-1, M_{t-1}
+  */
+  case class DecompressionState(t: BigInt, f: BigInt, itMinusOne: List[Boolean], mtMinusOne: List[Boolean]) {
+    require(t >= 0 && 1 <= f && f <= BasicEncodingFunctions.MAX_F && itMinusOne.size == f && mtMinusOne.size == f)
+  }
+
+  /**
     * Initial Build (B_0) vector, as defined in bluebook section 4.1 page 4-1.
     * 
     * f is the length of the vector, which is the length of compressed vectors.
@@ -78,6 +93,35 @@ object PocketExecSpec {
     require(1 <= f && f <= BasicEncodingFunctions.MAX_F)
     List.fill(f)(false)
   }
+
+
+  /**
+    * The part of the compressor's state that the decompressor can track from the output vectors alone.
+    * The remaining fields cannot be recovered: p_t and B_{t-1} never reach the output (different
+    * histories can yield identical output vectors), and f_{t+1}, r_{t+1} are only known once o_{t+1}
+    * arrives.
+    */
+  def decoderView(params: CompressionState): DecompressionState = {
+    ghostExpr(params.lemmaInvariant())
+    DecompressionState(params.t, params.f, params.itMinusOne, params.mtMinusOne)
+  }
+
+  /**
+    * The decompressor is synchronized with the compressor when it holds the compressor's decoder view.
+    * At t = 0 only t and f must match: f_0 = r_0 = 1 (section 3.3.2), so the first output vector
+    * carries both the full mask and the uncompressed input.
+    */
+  def inSync(params: CompressionState, st: DecompressionState): Boolean = {
+    params.t == st.t && params.f == st.f && (params.t == 0 || decoderView(params) == st)
+  }
+}
+
+/**
+  * Compressor: mask update (bluebook section 4) and encoding (bluebook section 5.3).
+  */
+object EncodingStep {
+  import PocketExecSpec.{CompressionState, build0, isAllZero}
+
   /**
     * Compute the new mask and the new build vector for the given time step t, based on the previous build and mask vectors, and the current input vector.
     * The procedure is defined in the blue book (Section 4.2, page 4-1).
@@ -90,7 +134,7 @@ object PocketExecSpec {
     * @param mtMinusOne
     * @return
     */
-  def updateMaskAndBuild(params: CompressionParameters, it: List[Boolean]): (List[Boolean], List[Boolean]) = {
+  def updateMaskAndBuild(params: CompressionState, it: List[Boolean]): (List[Boolean], List[Boolean]) = {
     require(params.f == it.size)
     if (params.pts.head == false) {
       val newBuild: List[Boolean] with newBuild.size == params.f = if params.t > 0 then or(xor(it, params.itMinusOne), params.btMinusOne) else build0(params.f)
@@ -111,13 +155,13 @@ object PocketExecSpec {
     * @param params
     * @param mt
     */
-  def updateChangeVector(params: CompressionParameters, mt: List[Boolean]): List[Boolean] = {
+  def updateChangeVector(params: CompressionState, mt: List[Boolean]): List[Boolean] = {
     require(params.f == mt.size)
     if params.t > 0 then xor(mt, params.mtMinusOne) else build0(params.f)
   }.ensuring(res => res.size == params.f)
 
   /**
-    * Advances one step: encodes `it` under `params`, and derives the CompressionParameters for
+    * Advances one step: encodes `it` under `params`, and derives the CompressionState for
     * step t+1 from the resulting mask/build/change state. The caller still supplies the next
     * step's user-controlled inputs (new-mask flag, ft, rt) since those are external parameters,
     * not state derived from the encoding itself. `ct` is NOT user-given: it is C_t as defined in
@@ -125,9 +169,9 @@ object PocketExecSpec {
     * backwards in time starting right after the robustnessT window — so it is computed here from
     * `dts`, which carries the last min(t,15) D_t's for exactly this purpose.
     */
-  def encodingStep(params: CompressionParameters, it: List[Boolean], nextPt: Boolean, nextFt: Boolean, nextRt: Boolean): (List[Boolean], CompressionParameters) = {
+  def step(params: CompressionState, it: List[Boolean], nextPt: Boolean, nextFt: Boolean, nextRt: Boolean): (List[Boolean], CompressionState) = {
     require(params.f == it.size)
-    val (packet, bt, mt, dvect) = EncodingStep.step(params, it)
+    val (packet, bt, mt, dvect) = outputVector(params, it)
     val tNext = params.t + 1
     val consDts = Cons(dvect, params.dts)
     val newDts = consDts.take(min(tNext, 15))
@@ -183,7 +227,7 @@ object PocketExecSpec {
       ListSpecs.contentSubsetPreservesForall(consDts, newDts, (dv: List[Boolean]) => dv.size == params.f)
       assert(newDts.forall(dv => dv.size == params.f) && newDts.size == min(tNext, 15))
     })
-    val nextParams = CompressionParameters(
+    val nextParams = CompressionState(
       t = tNext, f = params.f, m0 = params.m0, robustnessT = params.robustnessT,
       pts = newPts, ft = nextFt, rt = nextRt, ct = nextCt,
       itMinusOne = it, btMinusOne = bt, mtMinusOne = mt, dts = newDts
@@ -199,59 +243,6 @@ object PocketExecSpec {
   )
 
   /**
-    * Decompressor state at time step t. Unlike [[CompressionParameters]] it carries no user-specified
-    * parameter (M_0, R_t, p_t, f_t, r_t): the blue book guarantees they are all recoverable from the
-    * output vectors (section 3.1 and note of 3.3.2). Given F, the decompressor only needs the last
-    * reconstructed vector and a mask synchronized with the compressor's (section 2.1, a and b).
-    *
-    * @param t current time step, starting from 0
-    * @param f size of the vectors, in bits
-    * @param itMinusOne last reconstructed input vector, I_{t-1}
-    * @param mtMinusOne mask vector at time step t-1, M_{t-1}
-    */
-  case class DecompressionState(t: BigInt, f: BigInt, itMinusOne: List[Boolean], mtMinusOne: List[Boolean]) {
-    require(t >= 0 && 1 <= f && f <= BasicEncodingFunctions.MAX_F && itMinusOne.size == f && mtMinusOne.size == f)
-  }
-
-  /**
-    * The part of the compressor's state that the decompressor can track from the output vectors alone.
-    * The remaining fields cannot be recovered: p_t and B_{t-1} never reach the output (different
-    * histories can yield identical output vectors), and f_{t+1}, r_{t+1} are only known once o_{t+1}
-    * arrives.
-    */
-  def decoderView(params: CompressionParameters): DecompressionState = {
-    ghostExpr(params.lemmaInvariant())
-    DecompressionState(params.t, params.f, params.itMinusOne, params.mtMinusOne)
-  }
-
-  /**
-    * The decompressor is synchronized with the compressor when it holds the compressor's decoder view.
-    * At t = 0 only t and f must match: f_0 = r_0 = 1 (section 3.3.2), so the first output vector
-    * carries both the full mask and the uncompressed input.
-    */
-  def inSync(params: CompressionParameters, st: DecompressionState): Boolean = {
-    params.t == st.t && params.f == st.f && (params.t == 0 || decoderView(params) == st)
-  }
-
-  /**
-    * Mirror of [[encodingStep]]: consumes one output vector o_t of the given length, and returns
-    * the reconstructed input vector I_t, the state for step t+1. If the vector o_t is not a well formed packet
-    * for the given state, returns None and leaves the state unchanged.
-    * IMPORTANT: /!\ This function assumes that the received o_t is the whole packet to decode.
-    */
-  def decodingStep(st: DecompressionState, ot: List[Boolean]): (Option[List[Boolean]], DecompressionState) = {
-    (None(), st): (Option[List[Boolean]], DecompressionState) // TODO: implement the decompression step
-  }.ensuring(res => res match {
-    case (Some(it), nextSt) => nextSt.t == st.t + 1 && nextSt.f == st.f && nextSt.itMinusOne == it && it.size == st.f
-    case (None(), nextSt) => nextSt == st
-  })
-}
-
-/**
-  * Bluebook section 5.3
-  */
-object EncodingStep {
-  /**
     * Computes the output vector for the given time step, along with the resulting build (B_t),
     * mask (M_t) and change (D_t) vectors, so the caller can advance to time step t+1 without
     * recomputing them.
@@ -260,10 +251,10 @@ object EncodingStep {
     * @param it
     * @return (output vector, bt, mt, dvect)
     */
-  def step(params: PocketExecSpec.CompressionParameters, it: List[Boolean]): (List[Boolean], List[Boolean], List[Boolean], List[Boolean]) = {
+  def outputVector(params: CompressionState, it: List[Boolean]): (List[Boolean], List[Boolean], List[Boolean], List[Boolean]) = {
     require(params.f == it.size)
-    val (bt, mt) = PocketExecSpec.updateMaskAndBuild(params, it)
-    val dvect = PocketExecSpec.updateChangeVector(params, mt)
+    val (bt, mt) = updateMaskAndBuild(params, it)
+    val dvect = updateChangeVector(params, mt)
     // ht computation
     // X_T represents all the bit positions that became "unpredictable" during the last R_t + 1 cycles, i.e., if R_t = 0 then X_t = D_t so the changes between t-1 and t, and otherwise, betwee t-R_t and t.
     ghostExpr({
@@ -318,7 +309,7 @@ object EncodingStep {
     *
     * @param params
     */
-  def compDt(params: PocketExecSpec.CompressionParameters): Boolean = !params.ft && !params.rt
+  def compDt(params: CompressionState): Boolean = !params.ft && !params.rt
 
   /**
     * Bluebook section 5.3.2.2
@@ -326,10 +317,29 @@ object EncodingStep {
     *
     * @param params
     */
-  def compVt(params: PocketExecSpec.CompressionParameters): BigInt = {
+  def compVt(params: CompressionState): BigInt = {
     ghostExpr(params.lemmaInvariant())
     if params.t - params.robustnessT <= 0 then params.robustnessT else params.robustnessT + params.ct
   }.ensuring(res => 0 <= res && res <= 15)
+}
+
+/**
+  * Decompressor: inverts [[EncodingStep.step]] using only the output vectors (bluebook section 2.1).
+  */
+object DecodingStep {
+  import PocketExecSpec.DecompressionState
+  /**
+    * Mirror of [[EncodingStep.step]]: consumes one output vector o_t of the given length, and returns
+    * the reconstructed input vector I_t, the state for step t+1. If the vector o_t is not a well formed packet
+    * for the given state, returns None and leaves the state unchanged.
+    * IMPORTANT: /!\ This function assumes that the received o_t is the whole packet to decode.
+    */
+  def step(st: DecompressionState, ot: List[Boolean]): (Option[List[Boolean]], DecompressionState) = {
+    (None(), st): (Option[List[Boolean]], DecompressionState) // TODO: implement the decompression step
+  }.ensuring(res => res match {
+    case (Some(it), nextSt) => nextSt.t == st.t + 1 && nextSt.f == st.f && nextSt.itMinusOne == it && it.size == st.f
+    case (None(), nextSt) => nextSt == st
+  })
 }
 
 

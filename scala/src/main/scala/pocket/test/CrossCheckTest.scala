@@ -1,7 +1,7 @@
 package pocket.test
 
 import stainless.collection.{List as SList, Nil as SNil}
-import pocket.{Decompressor, DecompressorState}
+import pocket.{Decompressor, DecompressorState, EncodingStep}
 
 /** Cross-checks PocketExecSpec's encoder against PocketPlus's array-based Decompressor. */
 object CrossCheckTest {
@@ -25,7 +25,7 @@ object CrossCheckTest {
 
     def randBits(): SList[Boolean] = toSList(IndexedSeq.fill(f)(rnd.nextBoolean()))
 
-    var params = CompressionParameters(
+    var params = CompressionState(
       t = 0, f = F, m0 = m0, robustnessT = 0, pts = SList(true), ft = true, rt = true, ct = 0,
       itMinusOne = build0(F), btMinusOne = build0(F), mtMinusOne = m0, dts = SNil()
     )
@@ -34,7 +34,7 @@ object CrossCheckTest {
     var t = 0
 
     while (t < steps && failure.isEmpty) {
-      val (packet, nextParams) = encodingStep(params, it, rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean())
+      val (packet, nextParams) = EncodingStep.step(params, it, rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean())
 
       val packetArr = toArray(packet)
       val recovered = Array.fill(f)(false)
