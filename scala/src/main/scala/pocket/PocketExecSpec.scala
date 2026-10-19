@@ -38,8 +38,8 @@ object PocketExecSpec {
     *  The values of user-specified parameters Mo, Rt, ft, Pt, and it need not be known
     *  in advance, or communicated via means external to the compressor, for successful decompression.
     *
-    * @param t
-    * @param f
+    * @param t current time step, starting from 0
+    * @param f size of the vectors, in bits
     * @param m0 initial mask, a bit sequence of length f
     * @param robustnessT Robustness level, between 0 and 7.
     * @param pts "new mask" flags, with its history of the previous "R_t + C_t"s as this is needed to compute a new value in the encoding step (eq 20 in bluebook section 5.3.3.1). Head is p_t.
@@ -189,7 +189,14 @@ object PocketExecSpec {
       itMinusOne = it, btMinusOne = bt, mtMinusOne = mt, dts = newDts
     )
     (packet, nextParams)
-  }.ensuring(res => res._2.t == params.t + 1 && res._2.itMinusOne == it)
+  }.ensuring(res => 
+    res._2.t == params.t + 1 && 
+    res._2.itMinusOne == it &&
+    res._2.robustnessT == params.robustnessT &&
+    res._2.ft == nextFt &&
+    res._2.rt == nextRt &&
+    res._2.rt == nextRt
+  )
 }
 
 /**
