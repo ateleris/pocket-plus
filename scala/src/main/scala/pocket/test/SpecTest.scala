@@ -44,7 +44,7 @@ object SpecTest {
   }
 
   def run(c: Case): Boolean = {
-    val (packet, _, _, _) = EncodingStep.outputVector(c.params, toSList(c.input))
+    val (packet, _, _, _) = Encoder.outputVector(c.params, toSList(c.input))
     val got = toArray(packet)
     val ok = bits(got) == bits(c.expected)
     if (ok) println(s"PASS  ${c.name}")
@@ -71,7 +71,7 @@ object SpecTest {
     val out = new scala.collection.mutable.ArrayBuffer[Byte]()
     for (i <- c.packets.indices) {
       val (nextPt, nextFt, nextRt) = if (i + 1 < c.flags.length) c.flags(i + 1) else (false, false, false)
-      val (packet, nextParams) = EncodingStep.step(params, toSList(c.packets(i)), nextPt, nextFt, nextRt)
+      val (packet, nextParams) = Encoder.step(params, toSList(c.packets(i)), nextPt, nextFt, nextRt)
       out ++= packBitsPadded(toArray(packet))
       params = nextParams
     }

@@ -119,7 +119,7 @@ object PocketExecSpec {
 /**
   * Compressor: mask update (bluebook section 4) and encoding (bluebook section 5.3).
   */
-object EncodingStep {
+object Encoder {
   import PocketExecSpec.{CompressionState, build0, isAllZero}
 
   /**
@@ -324,12 +324,12 @@ object EncodingStep {
 }
 
 /**
-  * Decompressor: inverts [[EncodingStep.step]] using only the output vectors (bluebook section 2.1).
+  * Decompressor: inverts [[Encoder.step]] using only the output vectors (bluebook section 2.1).
   */
-object DecodingStep {
+object Decoder {
   import PocketExecSpec.DecompressionState
   /**
-    * Mirror of [[EncodingStep.step]]: consumes one output vector o_t of the given length, and returns
+    * Mirror of [[Encoder.step]]: consumes one output vector o_t of the given length, and returns
     * the reconstructed input vector I_t, the state for step t+1. If the vector o_t is not a well formed packet
     * for the given state, returns None and leaves the state unchanged.
     * IMPORTANT: /!\ This function assumes that the received o_t is the whole packet to decode.

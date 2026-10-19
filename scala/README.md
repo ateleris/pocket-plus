@@ -15,7 +15,7 @@ from the `scala/` directory:
 sbt "runMain pocket.test.SpecTest"
 ```
 
-Checks `EncodingStep` (in `PocketExecSpec.scala`) against hand-written cases and the
+Checks `Encoder` (in `PocketExecSpec.scala`) against hand-written cases and the
 differential test vectors in `src/test/res/test-vectors/differential/cases.json`.
 
 ```bash
