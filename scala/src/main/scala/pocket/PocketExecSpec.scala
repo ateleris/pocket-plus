@@ -13,24 +13,36 @@ object PocketExecSpec {
     * verification. */
   def isAllZero(dv: List[Boolean]): Boolean = dv.forall(b => b == false)
 
-  def paramsInvariant(t: BigInt, f: BigInt, m0: List[Boolean], robustnessT: BigInt, pts: List[Boolean], ft: Boolean, rt: Boolean, ct: BigInt, itMinusOne: List[Boolean], btMinusOne: List[Boolean], mtMinusOne: List[Boolean], dts: List[List[Boolean]]): Boolean = {
-      (t >= 0)
-      && (1 <= f && f <= BasicEncodingFunctions.MAX_F)
-      && (m0.size == f)
-      && (0 <= robustnessT && robustnessT <= 7)
-      && (if t <= robustnessT then ft == true else true) // when t <= robustnessT, the mask must be sent, otherwise, the flag is user defined (bluebook section 3.3.2)
-      && (if t <= robustnessT then rt == true else true) // when t <= robustnessT, the uncompressed flag must be true, otherwise, the flag is user defined (bluebook section 3.3.2)
-      && (if t <= robustnessT + ct then pts.size == t + 1 else pts.size == robustnessT + ct + 1) // pts is the history of the previous "R_t + C_t"s and the current pt, and therefore must be updated at every time step.
-      && (0 <= ct && ct <= min(t, 15) - robustnessT)
-      // ct is the number of consecutive all-zero D_t's, starting right after the robustnessT
-      // window and counting backwards in time (dts is newest-first).
-      && (ct == dts.drop(robustnessT).takeWhile(isAllZero).size)
-      && (itMinusOne.size == f)
-      && (btMinusOne.size == f && (if t == 0 then btMinusOne == build0(f) else true))
-      && (mtMinusOne.size == f && (if t == 0 then mtMinusOne == m0 else true))
-      && (dts.forall(dv => dv.size == f) && dts.size == min(t, 15)) // last min(t,15) D_t's, newest first: enough history to compute both X_t (first robustnessT of them) and C_t (5.3.2.2, eq. 14)
-
-    }
+  def paramsInvariant(
+      t: BigInt,
+      f: BigInt,
+      m0: List[Boolean],
+      robustnessT: BigInt,
+      pts: List[Boolean],
+      ft: Boolean,
+      rt: Boolean,
+      ct: BigInt,
+      itMinusOne: List[Boolean],
+      btMinusOne: List[Boolean],
+      mtMinusOne: List[Boolean],
+      dts: List[List[Boolean]]
+  ): Boolean = {
+    (t >= 0)
+    && (1 <= f && f <= BasicEncodingFunctions.MAX_F)
+    && (m0.size == f)
+    && (0 <= robustnessT && robustnessT <= 7)
+    && (if t <= robustnessT then ft == true else true) // when t <= robustnessT, the mask must be sent, otherwise, the flag is user defined (bluebook section 3.3.2)
+    && (if t <= robustnessT then rt == true else true) // when t <= robustnessT, the uncompressed flag must be true, otherwise, the flag is user defined (bluebook section 3.3.2)
+    && (if t <= robustnessT + ct then pts.size == t + 1 else pts.size == robustnessT + ct + 1) // pts is the history of the previous "R_t + C_t"s and the current pt, and therefore must be updated at every time step.
+    && (0 <= ct && ct <= min(t, 15) - robustnessT)
+    // ct is the number of consecutive all-zero D_t's, starting right after the robustnessT
+    // window and counting backwards in time (dts is newest-first).
+    && (ct == dts.drop(robustnessT).takeWhile(isAllZero).size)
+    && (itMinusOne.size == f)
+    && (btMinusOne.size == f && (if t == 0 then btMinusOne == build0(f) else true))
+    && (mtMinusOne.size == f && (if t == 0 then mtMinusOne == m0 else true))
+    && (dts.forall(dv => dv.size == f) && dts.size == min(t, 15)) // last min(t,15) D_t's, newest first: enough history to compute both X_t (first robustnessT of them) and C_t (5.3.2.2, eq. 14)
+  }
   /**
     * Compression parameters as defined in the blue book (Section 3.3.2, page 3-4).
     * 
@@ -54,7 +66,20 @@ object PocketExecSpec {
     * @param mtMinusOne mask vector at time step t-1
     * @param dts "Robustness level"s last D_t (used to compute X_t during encoding). The head is them most recent element, and at most D_{t-1}. This is NOT a parameter but some state.
     */
-  case class CompressionState(t: BigInt, f: BigInt, m0: List[Boolean], robustnessT: BigInt, pts: List[Boolean], ft: Boolean, rt: Boolean, ct: BigInt, itMinusOne: List[Boolean], btMinusOne: List[Boolean], mtMinusOne: List[Boolean], dts: List[List[Boolean]]) {
+  case class CompressionState(
+      t: BigInt,
+      f: BigInt,
+      m0: List[Boolean],
+      robustnessT: BigInt,
+      pts: List[Boolean],
+      ft: Boolean,
+      rt: Boolean,
+      ct: BigInt,
+      itMinusOne: List[Boolean],
+      btMinusOne: List[Boolean],
+      mtMinusOne: List[Boolean],
+      dts: List[List[Boolean]]
+  ) {
     require(paramsInvariant(t, f, m0, robustnessT, pts, ft, rt, ct, itMinusOne, btMinusOne, mtMinusOne, dts))
 
     def ptSetMoreThanOnceInHistory(historyLength: BigInt): Boolean = {
@@ -169,7 +194,13 @@ object Encoder {
     * backwards in time starting right after the robustnessT window — so it is computed here from
     * `dts`, which carries the last min(t,15) D_t's for exactly this purpose.
     */
-  def step(params: CompressionState, it: List[Boolean], nextPt: Boolean, nextFt: Boolean, nextRt: Boolean): (List[Boolean], CompressionState) = {
+  def step(
+      params: CompressionState,
+      it: List[Boolean],
+      nextPt: Boolean,
+      nextFt: Boolean,
+      nextRt: Boolean
+  ): (List[Boolean], CompressionState) = {
     require(params.f == it.size)
     val (packet, bt, mt, dvect) = outputVector(params, it)
     val tNext = params.t + 1
@@ -334,7 +365,10 @@ object Decoder {
     * for the given state, returns None and leaves the state unchanged.
     * IMPORTANT: /!\ This function assumes that the received o_t is the whole packet to decode.
     */
-  def step(st: DecompressionState, ot: List[Boolean]): (Option[List[Boolean]], DecompressionState) = {
+  def step(
+      st: DecompressionState,
+      ot: List[Boolean]
+  ): (Option[List[Boolean]], DecompressionState) = {
     (None(), st): (Option[List[Boolean]], DecompressionState) // TODO: implement the decompression step
   }.ensuring(res => res match {
     case (Some(it), nextSt) => nextSt.t == st.t + 1 && nextSt.f == st.f && nextSt.itMinusOne == it && it.size == st.f
