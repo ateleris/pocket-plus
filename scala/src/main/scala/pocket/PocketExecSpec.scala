@@ -1,6 +1,6 @@
 package pocket
 
-import stainless.lang.{ghost => ghostExpr, *}
+import stainless.lang.{ghost => ghostExpr, Option, None, Some, *}
 import stainless.annotation.*
 import stainless.collection.*
 import stainless.lang.StaticChecks.*
@@ -240,7 +240,7 @@ object PocketExecSpec {
     * well-formed output vector.
     */
   def decodingStep(st: DecompressionState, bits: List[Boolean]): Option[(List[Boolean], DecompressionState, List[Boolean])] = {
-    ??? : Option[(List[Boolean], DecompressionState, List[Boolean])]
+    None(): Option[(List[Boolean], DecompressionState, List[Boolean])] // TODO: implement the decompression step
   }.ensuring(res => res match {
     case Some((it, nextSt, rest)) =>
       it.size == st.f &&
