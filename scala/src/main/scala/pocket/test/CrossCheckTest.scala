@@ -1,6 +1,7 @@
-package pocket
+package pocket.test
 
 import stainless.collection.{List as SList, Nil as SNil}
+import pocket.{Decompressor, DecompressorState}
 
 /** Cross-checks PocketExecSpec's encoder against PocketPlus's array-based Decompressor. */
 object CrossCheckTest {
@@ -14,7 +15,7 @@ object CrossCheckTest {
   case class Failure(step: Int, expected: String, got: String, packetBits: Int)
 
   def runSequence(f: Int, steps: Int, seed: Long): Option[Failure] = {
-    import PocketExecSpec.*
+    import pocket.PocketExecSpec.*
     val rnd = new scala.util.Random(seed)
     val F = BigInt(f)
     val m0 = build0(F)

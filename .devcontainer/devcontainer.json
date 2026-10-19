@@ -9,9 +9,18 @@
     "features": {
         // JDK for Stainless/GenC: the JVM args used by native/build.sh and
         // python/pocketplus/verify.py (--sun-misc-unsafe-memory-access)
-        // need JDK 23+; Temurin 25 matches CI.
+        // need JDK 23+; Temurin 25 matches CI. `version` is the exact SDKMAN
+        // candidate identifier (check with `sdk list java | grep tem`),
+        // not a bare major version: the feature's install.sh only accepts
+        // a partial version like "25" via a regex match against `sdk list
+        // java`'s output, and that regex requires an exact major-version
+        // prefix which fails to find anything for a recent JDK ("Version 25
+        // not found. Available versions:" — empty). Passing the full
+        // identifier instead matches install.sh's `full_version_check`
+        // pattern (`.*-[a-z]+$`), which takes it verbatim as `sdk install
+        // java <identifier>`, skipping that broken lookup entirely.
         "ghcr.io/devcontainers/features/java:1": {
-            "version": "25",
+            "version": "25.0.4.1+1-tem",
             "jdkDistro": "tem"
         },
         "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}

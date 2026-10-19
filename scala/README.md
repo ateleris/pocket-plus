@@ -12,14 +12,14 @@ There is no `sbt test` suite here — tests are plain `main` methods that print
 from the `scala/` directory:
 
 ```bash
-sbt "runMain pocket.SpecTest"
+sbt "runMain pocket.test.SpecTest"
 ```
 
 Checks `EncodingStep` (in `PocketExecSpec.scala`) against hand-written cases and the
 differential test vectors in `src/test/res/test-vectors/differential/cases.json`.
 
 ```bash
-sbt "runMain pocket.CrossCheckTest"
+sbt "runMain pocket.test.CrossCheckTest"
 ```
 
 Cross-checks the Stainless-verified `List[Boolean]` encoder (`PocketExecSpec`) against
