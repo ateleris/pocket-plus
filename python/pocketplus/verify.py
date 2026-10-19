@@ -30,6 +30,10 @@ REPORT_JSON = os.path.join(CACHE_DIR, "report.json")
 FILES_TO_VERIFY = [
     # os.path.join(SCALA_DIR, "PocketPlus.scala"),
     os.path.join(SCALA_SOURCE_FILES_DIR, "PocketExecSpec.scala"),
+    os.path.join(SCALA_SOURCE_FILES_DIR, "datastructure", "arrays", "BitArray.scala"),
+    os.path.join(SCALA_SOURCE_FILES_DIR, "datastructure", "arrays", "ByteArray.scala"),
+    os.path.join(SCALA_SOURCE_FILES_DIR, "datastructure", "arrays", "IntArray.scala"),
+    os.path.join(SCALA_SOURCE_FILES_DIR, "datastructure", "Utils.scala"),
 ]
 N_THREADS = 4
 
@@ -43,6 +47,8 @@ _PASSING_STATUSES = {"Valid", "ValidFromCache", "Trivial"}
 def _vc_location(record: dict) -> str:
     pos = record["pos"]
     p = pos["begin"] if "begin" in pos else pos
+    if "file" not in p:  # e.g. {"kind": {"Unknown": {}}} for VCs Stainless can't place
+        return "<unknown position>"
     file = os.path.relpath(p["file"], _REPO)
     return f"{file}:{p['line']}:{p['col']}"
 

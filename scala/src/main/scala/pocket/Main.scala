@@ -2,7 +2,7 @@ package pocket
 
 import stainless.collection.*
 
-/** Runnable demo built directly on [[PocketExecSpec]] / [[EncodingStep]] — the Stainless-verified,
+/** Runnable demo built directly on [[PocketExecSpec]] / [[Encoder]] — the Stainless-verified,
  *  `List[Boolean]`-based spec — rather than the GenC-oriented [[PocketPlus]] array implementation
  *  (which is only used here, on the decoding side, as an independent cross-check).
  *
@@ -30,11 +30,11 @@ object Main {
     val dst = DecompressorState(f, Array.fill(f)(false), Array.fill(f)(false), 0)
     Decompressor.decompressorInit(dst)
 
-    // Encodes `it` under `params` via EncodingStep.step, decodes the packet with the
+    // Encodes `it` under `params` via Encoder.step, decodes the packet with the
     // array-based Decompressor, and returns the next step's parameters.
     def step(label: String, params: CompressionState, it: List[Boolean],
         nextPt: Boolean, nextFt: Boolean, nextRt: Boolean): CompressionState = {
-      val (packet, nextParams) = EncodingStep.step(params, it, nextPt, nextFt, nextRt)
+      val (packet, nextParams) = Encoder.step(params, it, nextPt, nextFt, nextRt)
 
       val packetArr = toArray(packet)
       val recovered = Array.fill(f)(false)

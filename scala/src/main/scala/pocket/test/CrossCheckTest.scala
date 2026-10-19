@@ -1,7 +1,7 @@
 package pocket.test
 
 import stainless.collection.{List as SList, Nil as SNil}
-import pocket.{Decompressor, DecompressorState, EncodingStep}
+import pocket.{Decompressor, DecompressorState, Encoder}
 
 /** Cross-checks PocketExecSpec's encoder against PocketPlus's array-based Decompressor. */
 object CrossCheckTest {
@@ -34,7 +34,7 @@ object CrossCheckTest {
     var t = 0
 
     while (t < steps && failure.isEmpty) {
-      val (packet, nextParams) = EncodingStep.step(params, it, rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean())
+      val (packet, nextParams) = Encoder.step(params, it, rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean())
 
       val packetArr = toArray(packet)
       val recovered = Array.fill(f)(false)
