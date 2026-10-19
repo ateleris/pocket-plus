@@ -1,4 +1,5 @@
 package pocket
+package test
 
 /** Minimal JSON reader for well-formed, machine-generated fixtures (no error recovery). */
 object Json {
