@@ -234,21 +234,16 @@ object PocketExecSpec {
   }
 
   /**
-    * Mirror of [[encodingStep]]: consumes one output vector o_t from the front of `bits`, and returns
-    * the reconstructed input vector I_t, the state for step t+1, and the remaining bits (output vectors
-    * are concatenated without framing, section 2.2). Returns None if `bits` does not start with a
-    * well-formed output vector.
+    * Mirror of [[encodingStep]]: consumes one output vector o_t of the given length, and returns
+    * the reconstructed input vector I_t, the state for step t+1. If the vector o_t is not a well formed packet
+    * for the given state, returns None and leaves the state unchanged.
+    * IMPORTANT: /!\ This function assumes that the received o_t is the whole packet to decode.
     */
-  def decodingStep(st: DecompressionState, bits: List[Boolean]): Option[(List[Boolean], DecompressionState, List[Boolean])] = {
-    None(): Option[(List[Boolean], DecompressionState, List[Boolean])] // TODO: implement the decompression step
+  def decodingStep(st: DecompressionState, ot: List[Boolean]): (Option[List[Boolean]], DecompressionState) = {
+    (None(), st): (Option[List[Boolean]], DecompressionState) // TODO: implement the decompression step
   }.ensuring(res => res match {
-    case Some((it, nextSt, rest)) =>
-      it.size == st.f &&
-      nextSt.t == st.t + 1 &&
-      nextSt.f == st.f &&
-      nextSt.itMinusOne == it &&
-      rest.size < bits.size
-    case None() => true
+    case (Some(it), nextSt) => nextSt.t == st.t + 1 && nextSt.f == st.f && nextSt.itMinusOne == it && it.size == st.f
+    case (None(), nextSt) => nextSt == st
   })
 }
 

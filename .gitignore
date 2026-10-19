@@ -18,7 +18,7 @@ native/build/
 *.obj
 *.ilk
 
-# --- GenC output (regenerated from scala/src/main/scala/pocket/PocketPlus.scala on build) ---
+# --- GenC output (regenerated from scala/src/main/scala/pocket/old/PocketPlus.scala on build) ---
 native/generated/pocketplus.c
 native/generated/pocketplus.h
 
