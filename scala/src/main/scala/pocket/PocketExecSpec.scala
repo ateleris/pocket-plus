@@ -162,7 +162,7 @@ object Encoder {
     * Advances one step: encodes `it` under `params` with the user-specified flags of this step
     * (new-mask flag `pt`, send-mask flag `ft`, uncompressed flag `rt`, bluebook section 3.3.2), and
     * derives the CompressionState for step t+1 from the resulting mask/build/change state. For
-    * t <= R_t the blue book requires ft = rt = 1; this is a precondition. `ct` is NOT user-given: it is C_t as defined in
+    * t <= R_t the blue book requires ft = rt = 1. `ct` is NOT user-given: it is C_t as defined in
     * the blue book (5.3.2.2, eq. 14) — the number of consecutive all-zero D_t' vectors, counted
     * backwards in time starting right after the robustnessT window — so it is computed here from
     * `dts`, which carries the last min(t,15) D_t's for exactly this purpose.
