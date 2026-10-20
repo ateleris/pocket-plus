@@ -1,5 +1,10 @@
 FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
 
+# A UTF-8 locale: the Stainless jar contains a class file with a non-ASCII name, and with
+# the image's default POSIX locale the JVM cannot map it, so Stainless dies before extraction
+# (`InvalidPathException ... shapeless/$tilde$qmark$greater$?.class`).
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+
 # clang for native/build.sh (the GenC output uses C99 VLAs — same reason the
 # Windows build uses ClangCL); Python 3.12 (Ubuntu 24.04's python3) matches CI;
 # curl/unzip for install.sh.
