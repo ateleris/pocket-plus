@@ -1,7 +1,8 @@
 package pocket.test
 
 import stainless.collection.{List as SList, Nil as SNil}
-import pocket.{Decompressor, DecompressorState, Encoder}
+import pocket.Encoder
+import pocket.old.{Decompressor, DecompressorState}
 
 /** Cross-checks PocketExecSpec's encoder against PocketPlus's array-based Decompressor. */
 object CrossCheckTest {

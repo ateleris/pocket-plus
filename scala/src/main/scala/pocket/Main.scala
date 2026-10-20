@@ -1,6 +1,7 @@
 package pocket
 
 import stainless.collection.*
+import pocket.old.{Decompressor, DecompressorState}
 
 /** Runnable demo built directly on [[PocketExecSpec]] / [[Encoder]] — the Stainless-verified,
  *  `List[Boolean]`-based spec — rather than the GenC-oriented [[PocketPlus]] array implementation
