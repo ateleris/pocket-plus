@@ -30,11 +30,6 @@ The document implements the verifiation plan, as described in WP 2.2 at page 27 
 > Outputs: 
 > - Formal verification plan annex to D3
 
-## Open Questions
-
-- “The verified decoder receives one packet with its exact bit length”; is that true?
-- To confirm: decode get the vector length.
-
 ## Structure
 
 ### Scope
