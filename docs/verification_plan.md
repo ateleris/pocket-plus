@@ -39,7 +39,7 @@ The document implements the verifiation plan, as described in WP 2.2 at page 27 
 
 ### Scope
 
-The formally verified part of SW2 is the core of the codec: the mask update (blue book section 4), the basic encoding functions (5.2), the encoding step (5.3), the decoding step with its validity checks (green book 3.3). The verified part also includes the state that both sides carry between steps and their synchronisation, including the robustness-level accounting (`V_t` and `C_t` on the encoder side, the loss counters on the decoder side). Everything around this core (packet framing, loss detection, parameter scheduling, multiplexing, monitoring, the C shim) is only tested. The boundary is given in _Tested-only features_ below.
+The formally verified part of SW2 is the core of the codec: the mask update (blue book section 4), the basic encoding functions (5.2), the encoding step (5.3), the decoding step with its validity checks (green book 3.3). Everything around this core (packet framing, loss detection, parameter scheduling, multiplexing, monitoring, the C shim) is only tested. The boundary is given in _Tested-only features_ below.
 
 ### Two implementations and a refinement
 
@@ -52,11 +52,11 @@ The core is written twice, in two subsets of Scala that Stainless verifies:
 |---|---|---|
 | State | immutable record passed to and returned by each step | caller-allocated struct mutated in place (the context object of R-PERF-07) |
 | Integers | unbounded `BigInt` | bounded `BigInt`, compiled to 32-bit machine integers in C, absence of overflows checked by Stainless |
-| Bit vectors | cons-lists of booleans, MSB first, one element per bit; induction is the main proof tool | packed machine words with explicit bit lengths |
+| Bit vectors | singly linked lists of booleans, MSB first: each bit is one list element (a `Boolean`, not a machine bit); induction is the main proof tool | bit vectors packed into machine words, one machine bit per bit, with explicit bit lengths |
 | Step | pure function `(state, input, flags) → (output, state')` | procedure writing into a caller-provided output buffer and updating the state in place |
 | History | what the definitions need: the last 15 change vectors, the new-mask flags of the robustness window, exact `t` | 8 change vectors and a zero-run counter, 15 flag bits, saturating `t` (green book table 5-1) |
 | Control flow | recursion over lists | loops with invariants, no recursion |
-| Role | object of the functional proofs; executable check of the specification against the reference vectors; oracle for random cross-validation | source of the generated C; object of the safety proofs; subject of the acceptance tests |
+| Role | object of the functional proofs; runs the reference test vectors so that its outputs can be checked against the expected ones; oracle for random cross-validation | source of the generated C; object of the safety proofs; subject of the acceptance tests |
 
 The proofs follow this split. Each property is proven once, on the functional specification. A refinement theorem then shows that the imperative implementation is behaviorally equivalent to it: a relation links every imperative state to the functional state it represents, and every entry point of the API produces the same bits as its functional counterpart and lands in a related state. Through this theorem every functional property transfers to the imperative implementation (_Lifted properties_ below). Only memory safety, frame conditions, and termination, are proven again directly on the imperative code.
 
