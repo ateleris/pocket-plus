@@ -39,7 +39,7 @@ The document implements the verifiation plan, as described in WP 2.2 at page 27 
 
 ### Scope
 
-The formally verified part of SW2 is the core of the codec: the mask update (blue book section 4), the basic encoding functions (5.2), the encoding step (5.3), the decoding step with its validity checks (green book 3.3), and the state both sides carry between steps, including the robustness-level accounting (V_t and C_t on the encoder side, the loss counters on the decoder side). Everything around this core (packet framing, loss detection, parameter scheduling, multiplexing, monitoring, the C shim) is tested only. The boundary is given in _Tested-only features_ below.
+The formally verified part of SW2 is the core of the codec: the mask update (blue book section 4), the basic encoding functions (5.2), the encoding step (5.3), the decoding step with its validity checks (green book 3.3). The verified part also includes the state that both sides carry between steps and their synchronisation, including the robustness-level accounting (`V_t` and `C_t` on the encoder side, the loss counters on the decoder side). Everything around this core (packet framing, loss detection, parameter scheduling, multiplexing, monitoring, the C shim) is only tested. The boundary is given in _Tested-only features_ below.
 
 ### Two implementations and a refinement
 
