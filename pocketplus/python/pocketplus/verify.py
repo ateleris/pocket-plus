@@ -30,6 +30,7 @@ REPORT_JSON = os.path.join(CACHE_DIR, "report.json")
 FILES_TO_VERIFY = [
     # os.path.join(SCALA_DIR, "PocketPlus.scala"),
     os.path.join(SCALA_SOURCE_FILES_DIR, "PocketExecSpec.scala"),
+    os.path.join(SCALA_SOURCE_FILES_DIR, "PocketImperative.scala"),
     os.path.join(SCALA_SOURCE_FILES_DIR, "datastructure", "arrays", "BitArray.scala"),
     os.path.join(SCALA_SOURCE_FILES_DIR, "datastructure", "arrays", "ByteArray.scala"),
     os.path.join(SCALA_SOURCE_FILES_DIR, "datastructure", "arrays", "IntArray.scala"),
