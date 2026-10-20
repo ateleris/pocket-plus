@@ -52,11 +52,11 @@ The core is written twice, in two subsets of Scala that Stainless verifies:
 |---|---|---|
 | State | immutable record passed to and returned by each step | caller-allocated struct mutated in place (the context object of R-PERF-07) |
 | Integers | unbounded `BigInt` | bounded `BigInt`, compiled to 32-bit machine integers in C, absence of overflows checked by Stainless |
-| Bit vectors | singly linked lists of booleans, MSB first: each bit is one list element (a `Boolean`, not a machine bit); induction is the main proof tool | bit vectors packed into machine words, one machine bit per bit, with explicit bit lengths |
+| Bit vectors | singly linked lists of booleans, MSB first; bits are `Boolean`s; induction is the main proof tool | packed machine words with explicit bit lengths; bits are machine bits |
 | Step | pure function `(state, input, flags) → (output, state')` | procedure writing into a caller-provided output buffer and updating the state in place |
 | History | what the definitions need: the last 15 change vectors, the new-mask flags of the robustness window, exact `t` | 8 change vectors and a zero-run counter, 15 flag bits, saturating `t` (green book table 5-1) |
 | Control flow | recursion over lists | loops with invariants, no recursion |
-| Role | object of the functional proofs; runs the reference test vectors so that its outputs can be checked against the expected ones; oracle for random cross-validation | source of the generated C; object of the safety proofs; subject of the acceptance tests |
+| Role | object of the functional proofs; oracle for random cross-validation | source of the generated C; object of the safety proofs; subject of the acceptance tests |
 
 The proofs follow this split. Each property is proven once, on the functional specification. A refinement theorem then shows that the imperative implementation is behaviorally equivalent to it: a relation links every imperative state to the functional state it represents, and every entry point of the API produces the same bits as its functional counterpart and lands in a related state. Through this theorem every functional property transfers to the imperative implementation (_Lifted properties_ below). Only memory safety, frame conditions, and termination, are proven again directly on the imperative code.
 
