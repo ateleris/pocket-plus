@@ -138,6 +138,19 @@ Body of `paramsInvariant`:
 && (dts.forall(dv => dv.size == f) && dts.size == min(t, 15)) // last min(t,15) D_t's, newest first: enough history to compute both X_t (first robustnessT of them) and C_t (5.3.2.2, eq. 14)
 ```
 
+The decoder state, `DecompressionState`, carries no user-specified parameter: the blue book guarantees that M_0, R_t, p_t, f_t and r_t are all recoverable from the output vectors (section 3.1 and the note of 3.3.2). Given F, the decoder only needs the last reconstructed vector and a mask synchronised with the encoder's (2.1 a and b); F is fixed when the state is created (see `docs/questions.md`). `decoderView` projects an encoder state onto the fields the decoder can track, and `inSync` states that the decoder holds the encoder's view; the round-trip properties are stated with it.
+
+```scala
+case class DecompressionState(t: BigInt, f: BigInt, itMinusOne: List[Boolean], mtMinusOne: List[Boolean]) {
+  require(t >= 0 && 1 <= f && f <= BasicEncodingFunctions.MAX_F && itMinusOne.size == f && mtMinusOne.size == f)
+}
+
+def decoderView(params: CompressionState): DecompressionState
+
+def inSync(params: CompressionState, st: DecompressionState): Boolean =
+  params.t == st.t && params.f == st.f && (params.t == 0 || decoderView(params) == st)
+```
+
 ### Encoder and Decoder
 
 ```scala
