@@ -100,7 +100,7 @@ The following are outside the verified core and are validated by the test campai
 
 ### Parameters
 
-The encoder state at step t is one immutable record, `CompressionState`. It groups three kinds of fields that the blue book treats differently: the fixed configuration of the stream (F, M_0), the user inputs of the step (R_t, p_t, f_t, r_t, with the history of p_t needed for c_t), and the derived state carried from one step to the next (t, I_(t-1), B_(t-1), M_(t-1), the change-vector history and C_t). The well-formedness of a state is `paramsInvariant`; it is the `require` of the class, so a state can only be built when it holds, and the step has to re-establish it (property _State invariant_).
+The encoder state at step t is one immutable record, `CompressionState`. It groups three kinds of fields that the blue book treats differently: the fixed configuration of the stream (F, M_0), the user inputs of the step (R_t, p_t, f_t, r_t, with the history of p_t needed for c_t), and the derived state carried from one step to the next (t, I_(t-1), B_(t-1), M_(t-1), the change-vector history and C_t). The well-formedness of a state is the `require` of the class, so a state can only be built when it holds, and the step has to re-establish it (property _State invariant_).
 
 ```scala
 case class CompressionState(
@@ -117,41 +117,24 @@ case class CompressionState(
     mtMinusOne: List[Boolean],
     dts: List[List[Boolean]]
 ) {
-  require(paramsInvariant(t, f, m0, robustnessT, pts, ft, rt, ct, itMinusOne, btMinusOne, mtMinusOne, dts))
+  require(
+    (t >= 0)
+    && (1 <= f && f <= BasicEncodingFunctions.MAX_F)
+    && (m0.size == f)
+    && (0 <= robustnessT && robustnessT <= 7)
+    && (if t <= robustnessT then ft == true else true) // when t <= robustnessT, the mask must be sent, otherwise, the flag is user defined (bluebook section 3.3.2)
+    && (if t <= robustnessT then rt == true else true) // when t <= robustnessT, the uncompressed flag must be true, otherwise, the flag is user defined (bluebook section 3.3.2)
+    && (if t <= robustnessT + ct then pts.size == t + 1 else pts.size == robustnessT + ct + 1) // pts is the history of the previous "R_t + C_t"s and the current pt, and therefore must be updated at every time step.
+    && (0 <= ct && ct <= min(t, 15) - robustnessT)
+    // ct is the number of consecutive all-zero D_t's, starting right after the robustnessT
+    // window and counting backwards in time (dts is newest-first).
+    && (ct == dts.drop(robustnessT).takeWhile(isAllZero).size)
+    && (itMinusOne.size == f)
+    && (btMinusOne.size == f && (if t == 0 then btMinusOne == build0(f) else true))
+    && (mtMinusOne.size == f && (if t == 0 then mtMinusOne == m0 else true))
+    && (dts.forall(dv => dv.size == f) && dts.size == min(t, 15)) // last min(t,15) D_t's, newest first: enough history to compute both X_t (first robustnessT of them) and C_t (5.3.2.2, eq. 14)
+  )
   ...
-}
-```
-
-```scala
-def paramsInvariant(
-    t: BigInt,
-    f: BigInt,
-    m0: List[Boolean],
-    robustnessT: BigInt,
-    pts: List[Boolean],
-    ft: Boolean,
-    rt: Boolean,
-    ct: BigInt,
-    itMinusOne: List[Boolean],
-    btMinusOne: List[Boolean],
-    mtMinusOne: List[Boolean],
-    dts: List[List[Boolean]]
-): Boolean = {
-  (t >= 0)
-  && (1 <= f && f <= BasicEncodingFunctions.MAX_F)
-  && (m0.size == f)
-  && (0 <= robustnessT && robustnessT <= 7)
-  && (if t <= robustnessT then ft == true else true) // when t <= robustnessT, the mask must be sent, otherwise, the flag is user defined (bluebook section 3.3.2)
-  && (if t <= robustnessT then rt == true else true) // when t <= robustnessT, the uncompressed flag must be true, otherwise, the flag is user defined (bluebook section 3.3.2)
-  && (if t <= robustnessT + ct then pts.size == t + 1 else pts.size == robustnessT + ct + 1) // pts is the history of the previous "R_t + C_t"s and the current pt, and therefore must be updated at every time step.
-  && (0 <= ct && ct <= min(t, 15) - robustnessT)
-  // ct is the number of consecutive all-zero D_t's, starting right after the robustnessT
-  // window and counting backwards in time (dts is newest-first).
-  && (ct == dts.drop(robustnessT).takeWhile(isAllZero).size)
-  && (itMinusOne.size == f)
-  && (btMinusOne.size == f && (if t == 0 then btMinusOne == build0(f) else true))
-  && (mtMinusOne.size == f && (if t == 0 then mtMinusOne == m0 else true))
-  && (dts.forall(dv => dv.size == f) && dts.size == min(t, 15)) // last min(t,15) D_t's, newest first: enough history to compute both X_t (first robustnessT of them) and C_t (5.3.2.2, eq. 14)
 }
 ```
 
