@@ -34,8 +34,8 @@ object Main {
     // Encodes `it` under `params` via Encoder.step, decodes the packet with the
     // array-based Decompressor, and returns the next step's parameters.
     def step(label: String, params: CompressionState, it: List[Boolean],
-        nextPt: Boolean, nextFt: Boolean, nextRt: Boolean): CompressionState = {
-      val (packet, nextParams) = Encoder.step(params, it, nextPt, nextFt, nextRt)
+        pt: Boolean, ft: Boolean, rt: Boolean): CompressionState = {
+      val (packet, nextParams) = Encoder.step(params, it, pt, ft, rt)
 
       val packetArr = toArray(packet)
       val recovered = Array.fill(f)(false)
@@ -50,21 +50,21 @@ object Main {
       nextParams
     }
 
-    // t = 0: robustnessT = 0, so t <= robustnessT forces ft = rt = pts.head = true — the first
+    // t = 0: robustnessT = 0, so t <= robustnessT forces ft = rt = true — the first
     // packet must always go out uncompressed so the decompressor can bootstrap.
     val it0 = List(true, false, true, false, false, false, true, true)
     val params0 = CompressionState(
-      t = 0, f = F, m0 = m0, robustnessT = 0, pts = List(true), ft = true, rt = true, ct = 0,
+      t = 0, f = F, m0 = m0, robustnessT = 0, pts = Nil(), ct = 0,
       itMinusOne = build0(F), btMinusOne = build0(F), mtMinusOne = m0, dts = Nil()
     )
 
     // t = 1: one bit differs from it0 (index 6) -> compressed, predictive packet (ft = rt = false).
     val it1 = List(true, false, true, false, false, false, false, true)
-    val params1 = step("initial, uncompressed", params0, it0, nextPt = false, nextFt = false, nextRt = false)
+    val params1 = step("initial, uncompressed", params0, it0, pt = true, ft = true, rt = true)
 
     // t = 2: same input again -> exercises the mask/build bookkeeping with no fresh input change.
-    val params2 = step("one bit changed, compressed", params1, it1, nextPt = false, nextFt = false, nextRt = false)
+    val params2 = step("one bit changed, compressed", params1, it1, pt = false, ft = false, rt = false)
 
-    step("repeated input, compressed", params2, it1, nextPt = false, nextFt = false, nextRt = false)
+    step("repeated input, compressed", params2, it1, pt = false, ft = false, rt = false)
   }
 }

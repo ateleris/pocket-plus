@@ -13,14 +13,12 @@ object PocketExecSpec {
     * verification. */
   def isAllZero(dv: List[Boolean]): Boolean = dv.forall(b => b == false)
 
-  def paramsInvariant(t: BigInt, f: BigInt, m0: List[Boolean], robustnessT: BigInt, pts: List[Boolean], ft: Boolean, rt: Boolean, ct: BigInt, itMinusOne: List[Boolean], btMinusOne: List[Boolean], mtMinusOne: List[Boolean], dts: List[List[Boolean]]): Boolean = {
+  def paramsInvariant(t: BigInt, f: BigInt, m0: List[Boolean], robustnessT: BigInt, pts: List[Boolean], ct: BigInt, itMinusOne: List[Boolean], btMinusOne: List[Boolean], mtMinusOne: List[Boolean], dts: List[List[Boolean]]): Boolean = {
       (t >= 0)
       && (1 <= f && f <= BasicEncodingFunctions.MAX_F)
       && (m0.size == f)
       && (0 <= robustnessT && robustnessT <= 7)
-      && (if t <= robustnessT then ft == true else true) // when t <= robustnessT, the mask must be sent, otherwise, the flag is user defined (bluebook section 3.3.2)
-      && (if t <= robustnessT then rt == true else true) // when t <= robustnessT, the uncompressed flag must be true, otherwise, the flag is user defined (bluebook section 3.3.2)
-      && (if t <= robustnessT + ct then pts.size == t + 1 else pts.size == robustnessT + ct + 1) // pts is the history of the previous "R_t + C_t"s and the current pt, and therefore must be updated at every time step.
+      && (if t <= robustnessT + ct then pts.size == t else pts.size == robustnessT + ct) // pts is the history of the previous new-mask flags p_{t-1}, p_{t-2}, ... over the "R_t + C_t" window (the current p_t is an input of the step), and therefore must be updated at every time step.
       && (0 <= ct && ct <= min(t, 15) - robustnessT)
       // ct is the number of consecutive all-zero D_t's, starting right after the robustnessT
       // window and counting backwards in time (dts is newest-first).
@@ -42,10 +40,8 @@ object PocketExecSpec {
     * @param f size of the vectors, in bits
     * @param m0 initial mask, a bit sequence of length f
     * @param robustnessT Robustness level, between 0 and 7.
-    * @param pts "new mask" flags, with its history of the previous "R_t + C_t"s as this is needed to compute a new value in the encoding step (eq 20 in bluebook section 5.3.3.1). Head is p_t.
+    * @param pts history of the previous "new mask" flags p_{t-1}, p_{t-2}, ... over the "R_t + C_t" window, needed to compute c_t in the encoding step (eq 20 in bluebook section 5.3.3.1). Head is p_{t-1}; the current p_t is an input of the step.
     *           The unpredictable bits in the mask cannot be classified as predictable unless this flag is set by the user to true (bluebook section 2.1)
-    * @param ft send flag 
-    * @param rt uncompressed flag 
     * @param ct (defined in bluebook section 5.3.2.2) count of the occurences of of no mask changes, starting from the first cycle not covered by the minimum
     *           required effective robustness level and working backwards in time. ct is more state than parameters, but that does not matter since
     *           the compression parameters contain the time step t, and therefore must be updated at every time step.
@@ -54,17 +50,19 @@ object PocketExecSpec {
     * @param mtMinusOne mask vector at time step t-1
     * @param dts "Robustness level"s last D_t (used to compute X_t during encoding). The head is them most recent element, and at most D_{t-1}. This is NOT a parameter but some state.
     */
-  case class CompressionState(t: BigInt, f: BigInt, m0: List[Boolean], robustnessT: BigInt, pts: List[Boolean], ft: Boolean, rt: Boolean, ct: BigInt, itMinusOne: List[Boolean], btMinusOne: List[Boolean], mtMinusOne: List[Boolean], dts: List[List[Boolean]]) {
-    require(paramsInvariant(t, f, m0, robustnessT, pts, ft, rt, ct, itMinusOne, btMinusOne, mtMinusOne, dts))
+  case class CompressionState(t: BigInt, f: BigInt, m0: List[Boolean], robustnessT: BigInt, pts: List[Boolean], ct: BigInt, itMinusOne: List[Boolean], btMinusOne: List[Boolean], mtMinusOne: List[Boolean], dts: List[List[Boolean]]) {
+    require(paramsInvariant(t, f, m0, robustnessT, pts, ct, itMinusOne, btMinusOne, mtMinusOne, dts))
 
-    def ptSetMoreThanOnceInHistory(historyLength: BigInt): Boolean = {
-      require(historyLength >= 1 && historyLength <= pts.size)
-      pts.take(historyLength).count(b => b == true) > 1
+    /** Whether the new-mask flag was set to one more than once over the current step (flag `pt`) and the
+      * previous historyLength - 1 steps (bluebook eq. 20). */
+    def ptSetMoreThanOnceInHistory(pt: Boolean, historyLength: BigInt): Boolean = {
+      require(historyLength >= 1 && historyLength <= pts.size + 1)
+      Cons(pt, pts).take(historyLength).count(b => b == true) > 1
     }
 
     @ghost
     @inlineOnce
-    def lemmaInvariant(): Unit = {}.ensuring(_ => paramsInvariant(t, f, m0, robustnessT, pts, ft, rt, ct, itMinusOne, btMinusOne, mtMinusOne, dts))
+    def lemmaInvariant(): Unit = {}.ensuring(_ => paramsInvariant(t, f, m0, robustnessT, pts, ct, itMinusOne, btMinusOne, mtMinusOne, dts))
   }
 
   /**
@@ -134,9 +132,9 @@ object Encoder {
     * @param mtMinusOne
     * @return
     */
-  def updateMaskAndBuild(params: CompressionState, it: List[Boolean]): (List[Boolean], List[Boolean]) = {
+  def updateMaskAndBuild(params: CompressionState, it: List[Boolean], pt: Boolean): (List[Boolean], List[Boolean]) = {
     require(params.f == it.size)
-    if (params.pts.head == false) {
+    if (pt == false) {
       val newBuild: List[Boolean] with newBuild.size == params.f = if params.t > 0 then or(xor(it, params.itMinusOne), params.btMinusOne) else build0(params.f)
       val newMask: List[Boolean] with newMask.size == params.f = if params.t > 0 then or(xor(it, params.itMinusOne), params.mtMinusOne) else params.m0
       (newBuild, newMask)
@@ -161,17 +159,18 @@ object Encoder {
   }.ensuring(res => res.size == params.f)
 
   /**
-    * Advances one step: encodes `it` under `params`, and derives the CompressionState for
-    * step t+1 from the resulting mask/build/change state. The caller still supplies the next
-    * step's user-controlled inputs (new-mask flag, ft, rt) since those are external parameters,
-    * not state derived from the encoding itself. `ct` is NOT user-given: it is C_t as defined in
+    * Advances one step: encodes `it` under `params` with the user-specified flags of this step
+    * (new-mask flag `pt`, send-mask flag `ft`, uncompressed flag `rt`, bluebook section 3.3.2), and
+    * derives the CompressionState for step t+1 from the resulting mask/build/change state. For
+    * t <= R_t the blue book requires ft = rt = 1; this is a precondition. `ct` is NOT user-given: it is C_t as defined in
     * the blue book (5.3.2.2, eq. 14) — the number of consecutive all-zero D_t' vectors, counted
     * backwards in time starting right after the robustnessT window — so it is computed here from
     * `dts`, which carries the last min(t,15) D_t's for exactly this purpose.
     */
-  def step(params: CompressionState, it: List[Boolean], nextPt: Boolean, nextFt: Boolean, nextRt: Boolean): (List[Boolean], CompressionState) = {
+  def step(params: CompressionState, it: List[Boolean], pt: Boolean, ft: Boolean, rt: Boolean): (List[Boolean], CompressionState) = {
     require(params.f == it.size)
-    val (packet, bt, mt, dvect) = outputVector(params, it)
+    require(params.t > params.robustnessT || (ft && rt)) // bluebook 3.3.2 c) and d)
+    val (packet, bt, mt, dvect) = outputVector(params, it, pt, ft, rt)
     val tNext = params.t + 1
     val consDts = Cons(dvect, params.dts)
     val newDts = consDts.take(min(tNext, 15))
@@ -181,18 +180,16 @@ object Encoder {
     assert(nextCt >= 0 && nextCt <= 15)
     assert(nextCt >= 0 && nextCt <= 15 - params.robustnessT)
     assert(0 <= params.robustnessT + nextCt && params.robustnessT + nextCt <= 15)
-    val ptsCandidate = Cons(nextPt, params.pts)
-    val newPts = if tNext <= params.robustnessT + nextCt then ptsCandidate.take(tNext + 1) else ptsCandidate.take(params.robustnessT + nextCt + 1)
+    val ptsCandidate = Cons(pt, params.pts)
+    val newPts = if tNext <= params.robustnessT + nextCt then ptsCandidate.take(tNext) else ptsCandidate.take(params.robustnessT + nextCt)
 
     ghostExpr({
       params.lemmaInvariant()
-      assert(if params.t <= params.robustnessT + params.ct then params.pts.size == params.t + 1 else params.pts.size == params.robustnessT + params.ct + 1)
+      assert(if params.t <= params.robustnessT + params.ct then params.pts.size == params.t else params.pts.size == params.robustnessT + params.ct)
       assert(tNext >= 0)
       assert(1 <= params.f && params.f <= BasicEncodingFunctions.MAX_F)
       assert(params.m0.size == params.f)
       assert(0 <= params.robustnessT && params.robustnessT <= 7)
-      assert(if tNext <= params.robustnessT then nextFt == true else true)
-      assert(if tNext <= params.robustnessT then nextRt == true else true)
 
       // nextCt (C_t for the new step) can increase by at most 1 over params.ct (C_t for the old
       // step): newDts is just params.dts with one entry pushed on (dvect) and possibly the oldest
@@ -212,12 +209,12 @@ object Encoder {
         // (params.t <= params.robustnessT + params.ct): otherwise params.robustnessT + nextCt <=
         // params.robustnessT + params.ct + 1 <= params.t < tNext, contradicting the branch itself.
         assert(params.t <= params.robustnessT + params.ct)
-        assert(params.pts.size == params.t + 1)
-        assert(ptsCandidate.size == tNext + 1)
-        assert(newPts.size == tNext + 1)
+        assert(params.pts.size == params.t)
+        assert(ptsCandidate.size == tNext)
+        assert(newPts.size == tNext)
       else
-        assert(ptsCandidate.size >= params.robustnessT + nextCt + 1)
-        assert(newPts.size == params.robustnessT + nextCt + 1)
+        assert(ptsCandidate.size >= params.robustnessT + nextCt)
+        assert(newPts.size == params.robustnessT + nextCt)
       assert(0 <= nextCt && nextCt <= min(tNext, 15) - params.robustnessT)
       assert(it.size == params.f)
       assert(bt.size == params.f && (if tNext == 0 then bt == build0(params.f) else true))
@@ -229,17 +226,14 @@ object Encoder {
     })
     val nextParams = CompressionState(
       t = tNext, f = params.f, m0 = params.m0, robustnessT = params.robustnessT,
-      pts = newPts, ft = nextFt, rt = nextRt, ct = nextCt,
+      pts = newPts, ct = nextCt,
       itMinusOne = it, btMinusOne = bt, mtMinusOne = mt, dts = newDts
     )
     (packet, nextParams)
   }.ensuring(res => 
     res._2.t == params.t + 1 && 
     res._2.itMinusOne == it &&
-    res._2.robustnessT == params.robustnessT &&
-    res._2.ft == nextFt &&
-    res._2.rt == nextRt &&
-    res._2.rt == nextRt
+    res._2.robustnessT == params.robustnessT
   )
 
   /**
@@ -251,9 +245,9 @@ object Encoder {
     * @param it
     * @return (output vector, bt, mt, dvect)
     */
-  def outputVector(params: CompressionState, it: List[Boolean]): (List[Boolean], List[Boolean], List[Boolean], List[Boolean]) = {
+  def outputVector(params: CompressionState, it: List[Boolean], pt: Boolean, ft: Boolean, rt: Boolean): (List[Boolean], List[Boolean], List[Boolean], List[Boolean]) = {
     require(params.f == it.size)
-    val (bt, mt) = updateMaskAndBuild(params, it)
+    val (bt, mt) = updateMaskAndBuild(params, it, pt)
     val dvect = updateChangeVector(params, mt)
     // ht computation
     // X_T represents all the bit positions that became "unpredictable" during the last R_t + 1 cycles, i.e., if R_t = 0 then X_t = D_t so the changes between t-1 and t, and otherwise, betwee t-R_t and t.
@@ -272,15 +266,15 @@ object Encoder {
     assert(0 <= vt && vt < 16)
     val et: List[Boolean] with et.isEmpty || et.size == 1 = if vt == 0 || xt.forall(b => b == false) then List[Boolean]() else if yt.forall(b => b == false) && vt > 0 && !xt.forall(b => b == false) then List(false) else List(true)
     val kt: List[Boolean] with kt.isEmpty || kt == yt = if vt == 0 || xt.forall(b => b == false) || yt.forall(b => b == false) then List[Boolean]() else yt
-    val ct: List[Boolean] with ct.isEmpty || ct.size == 1 = if kt.isEmpty then List[Boolean]() else if !kt.isEmpty && !params.ptSetMoreThanOnceInHistory(vt + 1) then List(false) else List(true)
-    val dt: Boolean = compDt(params)
+    val ct: List[Boolean] with ct.isEmpty || ct.size == 1 = if kt.isEmpty then List[Boolean]() else if !kt.isEmpty && !params.ptSetMoreThanOnceInHistory(pt, vt + 1) then List(false) else List(true)
+    val dt: Boolean = compDt(ft, rt)
     val ht: List[Boolean] = BasicEncodingFunctions.runLengthEncode(xt) ++ BasicEncodingFunctions.encodeNBits(vt, 4, BasicEncodingFunctions.pow2Fast(4)) ++ et ++ kt ++ ct ++ List(dt)
 
     // qt computation
     val qt: List[Boolean] = 
       if dt then 
         List[Boolean]() 
-      else if params.ft then
+      else if ft then
         List(true) ++ BasicEncodingFunctions.runLengthEncode(xor(mt, leftShift(mt)).reverse)
       else 
         List(false) 
@@ -291,9 +285,9 @@ object Encoder {
         BasicEncodingFunctions.bitExtractionFunction(it, or(xt.reverse, mt))
       else if dt && ct != List(true) then
         BasicEncodingFunctions.bitExtractionFunction(it, mt)
-      else if params.rt then
+      else if rt then
         List(true) ++ BasicEncodingFunctions.countEncode(params.f) ++ it
-      else if !params.rt && params.ft && ct == List(true) then
+      else if !rt && ft && ct == List(true) then
         List(false) ++ BasicEncodingFunctions.bitExtractionFunction(it, or(xt.reverse, mt))
       else
         List(false) ++ BasicEncodingFunctions.bitExtractionFunction(it, mt)
@@ -309,7 +303,7 @@ object Encoder {
     *
     * @param params
     */
-  def compDt(params: CompressionState): Boolean = !params.ft && !params.rt
+  def compDt(ft: Boolean, rt: Boolean): Boolean = !ft && !rt
 
   /**
     * Bluebook section 5.3.2.2
