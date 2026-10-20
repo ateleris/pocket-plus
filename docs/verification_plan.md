@@ -120,33 +120,22 @@ case class CompressionState(
 }
 ```
 
+Body of `paramsInvariant`:
+
 ```scala
-def paramsInvariant(
-    t: BigInt,
-    f: BigInt,
-    m0: List[Boolean],
-    robustnessT: BigInt,
-    pts: List[Boolean],
-    ct: BigInt,
-    itMinusOne: List[Boolean],
-    btMinusOne: List[Boolean],
-    mtMinusOne: List[Boolean],
-    dts: List[List[Boolean]]
-): Boolean = {
-  (t >= 0)
-  && (1 <= f && f <= BasicEncodingFunctions.MAX_F)
-  && (m0.size == f)
-  && (0 <= robustnessT && robustnessT <= 7)
-  && (if t <= robustnessT + ct then pts.size == t else pts.size == robustnessT + ct) // pts is the history of the previous new-mask flags p_{t-1}, p_{t-2}, ... over the "R_t + C_t" window (the current p_t is an input of the step), and therefore must be updated at every time step.
-  && (0 <= ct && ct <= min(t, 15) - robustnessT)
-  // ct is the number of consecutive all-zero D_t's, starting right after the robustnessT
-  // window and counting backwards in time (dts is newest-first).
-  && (ct == dts.drop(robustnessT).takeWhile(isAllZero).size)
-  && (itMinusOne.size == f)
-  && (btMinusOne.size == f && (if t == 0 then btMinusOne == build0(f) else true))
-  && (mtMinusOne.size == f && (if t == 0 then mtMinusOne == m0 else true))
-  && (dts.forall(dv => dv.size == f) && dts.size == min(t, 15)) // last min(t,15) D_t's, newest first: enough history to compute both X_t (first robustnessT of them) and C_t (5.3.2.2, eq. 14)
-}
+(t >= 0)
+&& (1 <= f && f <= BasicEncodingFunctions.MAX_F)
+&& (m0.size == f)
+&& (0 <= robustnessT && robustnessT <= 7)
+&& (if t <= robustnessT + ct then pts.size == t else pts.size == robustnessT + ct) // pts is the history of the previous new-mask flags p_{t-1}, p_{t-2}, ... over the "R_t + C_t" window (the current p_t is an input of the step), and therefore must be updated at every time step.
+&& (0 <= ct && ct <= min(t, 15) - robustnessT)
+// ct is the number of consecutive all-zero D_t's, starting right after the robustnessT
+// window and counting backwards in time (dts is newest-first).
+&& (ct == dts.drop(robustnessT).takeWhile(isAllZero).size)
+&& (itMinusOne.size == f)
+&& (btMinusOne.size == f && (if t == 0 then btMinusOne == build0(f) else true))
+&& (mtMinusOne.size == f && (if t == 0 then mtMinusOne == m0 else true))
+&& (dts.forall(dv => dv.size == f) && dts.size == min(t, 15)) // last min(t,15) D_t's, newest first: enough history to compute both X_t (first robustnessT of them) and C_t (5.3.2.2, eq. 14)
 ```
 
 ### Encoder and Decoder
