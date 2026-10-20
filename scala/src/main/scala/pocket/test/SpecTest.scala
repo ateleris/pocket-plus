@@ -32,19 +32,19 @@ object SpecTest {
     padded.grouped(8).map(g => g.zipWithIndex.map((b, i) => if b then 1 << (7 - i) else 0).sum.toByte).toArray
   }
 
-  case class Case(name: String, params: PocketExecSpec.CompressionState, input: Array[Boolean], expected: Array[Boolean])
+  case class Case(name: String, params: PocketExecSpec.CompressionState, pt: Boolean, ft: Boolean, rt: Boolean, input: Array[Boolean], expected: Array[Boolean])
 
   /** Convenience for the common t=0 case: robustnessT=0, forced ft=rt=pt=true, zeroed prior state. */
   def t0Case(name: String, f: Int, input: Array[Boolean], expected: Array[Boolean]): Case = {
     import PocketExecSpec.*
     Case(name, CompressionState(
-      t = 0, f = f, m0 = build0(f), robustnessT = 0, pts = SList(true), ft = true, rt = true, ct = 0,
+      t = 0, f = f, m0 = build0(f), robustnessT = 0, pts = SNil(), ct = 0,
       itMinusOne = build0(f), btMinusOne = build0(f), mtMinusOne = build0(f), dts = SNil()
-    ), input, expected)
+    ), pt = true, ft = true, rt = true, input, expected)
   }
 
   def run(c: Case): Boolean = {
-    val (packet, _, _, _) = Encoder.outputVector(c.params, toSList(c.input))
+    val (packet, _, _, _) = Encoder.outputVector(c.params, toSList(c.input), c.pt, c.ft, c.rt)
     val got = toArray(packet)
     val ok = bits(got) == bits(c.expected)
     if (ok) println(s"PASS  ${c.name}")
@@ -65,13 +65,13 @@ object SpecTest {
     import PocketExecSpec.*
     var params = CompressionState(
       t = 0, f = c.f, m0 = toSList(c.m0), robustnessT = c.robustnessT,
-      pts = SList(c.flags(0)._1), ft = c.flags(0)._2, rt = c.flags(0)._3, ct = 0,
+      pts = SNil(), ct = 0,
       itMinusOne = build0(c.f), btMinusOne = build0(c.f), mtMinusOne = toSList(c.m0), dts = SNil()
     )
     val out = new scala.collection.mutable.ArrayBuffer[Byte]()
     for (i <- c.packets.indices) {
-      val (nextPt, nextFt, nextRt) = if (i + 1 < c.flags.length) c.flags(i + 1) else (false, false, false)
-      val (packet, nextParams) = Encoder.step(params, toSList(c.packets(i)), nextPt, nextFt, nextRt)
+      val (pt, ft, rt) = c.flags(i)
+      val (packet, nextParams) = Encoder.step(params, toSList(c.packets(i)), pt, ft, rt)
       out ++= packBitsPadded(toArray(packet))
       params = nextParams
     }
