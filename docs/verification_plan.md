@@ -57,9 +57,9 @@ The proofs follow this split. Each property is proven once, on the functional sp
 
 What remains trusted is Stainless and the SMT solvers, the GenC translator, and the C compiler. For this reason the generated C is cross-validated against the Scala reference on the shared test vectors (proposal 2.3), and the D4 campaign additionally runs it under a memory-error detector (D1, R-DES-05).
 
-### Verified properties
+### Formally (Symbolically) Verified properties
 
-The following properties will be proven with Stainless. They are theorems: each holds for every input vector, every state satisfying the invariant and every sequence of steps, not only for the test vectors, whereas the tested-only features below are validated on the vectors of D5. Each property has a section under _Properties_ below. Items marked _stretch_ are attempted after the committed ones and fall back to testing only if the proofs turn out too costly (proposal 2.9.1).
+The following properties will be proven with Stainless to show for arbitrarily many inputs, without specifying concrete inputs. What we will prove are theorems that hold for every input vector, every state satisfying the invariant and every sequence of steps, not only for the test vectors, whereas the tested-only features below are validated on the vectors of D5. Each property has a section under _Properties_ below. Items marked _stretch_ are attempted after the committed ones and fall back to testing only if the proofs turn out too costly (proposal 2.9.1).
 
 | Property | Statement |
 |---|---|
@@ -72,7 +72,7 @@ The following properties will be proven with Stainless. They are theorems: each 
 | **Lifted properties** | corollaries of Refinement, stated and proven for the imperative implementation so that D9 can map each requirement to a theorem about the delivered code: round-trip (single and multiple steps), validity-check totality and completeness, and the output size bound and robustness if proven. The multi-step case is one induction over call sequences, using that every call preserves the imperative state invariant. |
 | **Imperative safety** | the imperative implementation has no out-of-bounds access, no integer overflow or wraparound, terminates, and uses no recursion and no heap allocation (R-DES-05, R-PERF-04, R-PERF-05); it uses no division at all, as R-PERF-03 requires, so in particular no division by zero. Frame conditions: input buffers are never written, the output never exceeds the caller-provided capacity (checked at run time against the capacity, with an error code on overflow, so this does not depend on the size bound), and a rejected packet leaves the decoder state unchanged (R-PERF-07). |
 | **Output size bound (stretch)** | every output vector has at most 9.5·F + 44 bits (green book table 5-1); this sets the static buffer sizes of the C API. A somewhat larger bound of the same order may be proven instead if it is markedly easier; the C API then sizes its buffers from the bound actually proven. |
-| **Robustness (stretch)** | the normative guarantee of the blue book (2.1): if the decoder was synchronised before a gap of at most V_t consecutive lost output vectors and F is known, decoding o_t yields M_t and I_t; and an output vector with f_t = r_t = 1 is decoded correctly from any decoder state. |
+| **Robustness (stretch)** | the normative guarantee of the blue book (2.1): if the decoder was synchronised before a gap of at most V_t consecutive lost output vectors and F is known, decoding o_t yields M_t and I_t; and an output vector with f_t = r_t = 1 is decoded correctly from any decoder state. This is of great interest for the high-level understanding of the protocol implementation; attempted proofs may lead to new insights and corner cases that require further analysis and calibration of protocol claims. A first step is to prove the case when at most one packet is lost. |
 
 ### Tested-only features
 
