@@ -53,7 +53,9 @@ case class IntArray(
     require(i >= 0 && i < size)
     ghostExpr({
       Utils.lemmaSameArrayListContentImpliesSameLength(data, 0, toList)
+      Utils.lemmaToIntBigIntConversionBothDirections(toList.size, data.length)
       Utils.compareBigIntPreservedByToInt(i, size)
+      assert(i.toInt >= 0 && i.toInt < data.length)
       Utils.sameArrayListContent(data, 0, toList)
       Utils.lemmaSameArrayListContentPreservedByUpdated(
         data,
