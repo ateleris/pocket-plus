@@ -48,7 +48,8 @@ exists, then Run/Debug individual tests.
 `pytest -m verify`. It runs Stainless over all VCs and **fails if any VC is invalid or unknown**
 (a strict gate). It is excluded from ordinary builds because it is slow; results are cached under
 `build/.stainless-cache`, so re-runs only re-check changed VCs. Override the per-VC timeout with the
-`POCKETPLUS_VERIFY_TIMEOUT` env var (default 5s).
+`POCKETPLUS_VERIFY_TIMEOUT` env var (default 5s). Set `POCKETPLUS_VERIFY_PARALLEL` to change how many VCs are
+checked at once (default 4; CI uses 1, see `verify.py`).
 
 ## Build / test (command line, Windows)
 

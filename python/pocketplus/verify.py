@@ -35,7 +35,12 @@ FILES_TO_VERIFY = [
     os.path.join(SCALA_SOURCE_FILES_DIR, "datastructure", "arrays", "IntArray.scala"),
     os.path.join(SCALA_SOURCE_FILES_DIR, "datastructure", "Utils.scala"),
 ]
-N_THREADS = 4
+# VCs checked in parallel. Each VC runs the whole solver portfolio (z3, cvc5 and the in-process
+# Princess), so N workers mean up to 3N solver instances at once. Override with
+# POCKETPLUS_VERIFY_PARALLEL; CI sets 1: on a 4-vCPU runner, 4 workers starve Princess, the only
+# solver that proves the Int/BigInt conversion lemmas of datastructure/Utils.scala, until they
+# time out, while 1 worker verifies everything in under 3 minutes.
+N_THREADS = int(os.environ.get("POCKETPLUS_VERIFY_PARALLEL", "4"))
 
 
 JVM_ARGS = ["-Xss512m", "--sun-misc-unsafe-memory-access=allow", "-Dparallel={}".format(N_THREADS)]
