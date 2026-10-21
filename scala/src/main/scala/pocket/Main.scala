@@ -35,7 +35,7 @@ object Main {
     // array-based Decompressor, and returns the next step's parameters.
     def step(label: String, params: CompressionState, it: List[Boolean],
         pt: Boolean, ft: Boolean, rt: Boolean): CompressionState = {
-      val (packet, nextParams) = Encoder.step(params, it, pt, ft, rt)
+      val (packet, nextParams) = Encoder.step(params, it, pt, ft, rt, robustnessT = 0)
 
       val packetArr = toArray(packet)
       val recovered = Array.fill(f)(false)
@@ -50,11 +50,11 @@ object Main {
       nextParams
     }
 
-    // t = 0: robustnessT = 0, so t <= robustnessT forces ft = rt = true — the first
+    // t = 0: with robustnessT = 0, t <= robustnessT forces ft = rt = true — the first
     // packet must always go out uncompressed so the decompressor can bootstrap.
     val it0 = List(true, false, true, false, false, false, true, true)
     val params0 = CompressionState(
-      t = 0, f = F, m0 = m0, robustnessT = 0, pts = Nil(), ct = 0,
+      t = 0, f = F, m0 = m0, pts = Nil(),
       itMinusOne = build0(F), btMinusOne = build0(F), mtMinusOne = m0, dts = Nil()
     )
 

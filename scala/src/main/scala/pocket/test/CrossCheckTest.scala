@@ -27,7 +27,7 @@ object CrossCheckTest {
     def randBits(): SList[Boolean] = toSList(IndexedSeq.fill(f)(rnd.nextBoolean()))
 
     var params = CompressionState(
-      t = 0, f = F, m0 = m0, robustnessT = 0, pts = SNil(), ct = 0,
+      t = 0, f = F, m0 = m0, pts = SNil(),
       itMinusOne = build0(F), btMinusOne = build0(F), mtMinusOne = m0, dts = SNil()
     )
     var it = randBits()
@@ -37,7 +37,7 @@ object CrossCheckTest {
     while (t < steps && failure.isEmpty) {
       // t = 0 must be sent with the full mask and uncompressed (bluebook 3.3.2); random flags afterwards.
       val (pt, ft, rt) = if (t == 0) (true, true, true) else (rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean())
-      val (packet, nextParams) = Encoder.step(params, it, pt, ft, rt)
+      val (packet, nextParams) = Encoder.step(params, it, pt, ft, rt, robustnessT = 0)
 
       val packetArr = toArray(packet)
       val recovered = Array.fill(f)(false)
