@@ -69,9 +69,10 @@ The following properties will be proven with Stainless. Each has a section under
 | **Round-trip (single step)** | decoding the output vector of a step from the synchronised decoder state yields the input vector and the next synchronised decoder state. As a corollary, every output vector produced by the encoder passes every validity check (completeness). |
 | **Round-trip (multiple steps)** | by induction, any sequence of input vectors and user flags, including raw steps where the input vector is sent instead of the output vector (red book clause 6), is reconstructed exactly in the absence of losses of vectors. |
 | **Refinement** | the imperative encoder and decoder implement the functional specification: a relation links each imperative state to the functional state it represents (the imperative state is lossy: 8 change vectors and a counter instead of 15, a saturating t), and every entry point of the C API (encoder init, initial mask, compress step, mask-update-only step for red book clause 6; decoder init, decode step, loss signal) produces the same bits as its functional counterpart and lands in a related state. Bit-exactness across platforms (R-PORT-01) follows. |
-| **Lifted properties** | corollaries of Refinement, stated and proven for the imperative implementation so that D9 can map each requirement to a theorem about the delivered code: round-trip (single and multiple steps), validity-check totality and completeness, and the output size bound if proven. The multi-step case is one induction over call sequences, using that every call preserves the imperative state invariant. |
+| **Lifted properties** | corollaries of Refinement, stated and proven for the imperative implementation so that D9 can map each requirement to a theorem about the delivered code: round-trip (single and multiple steps), validity-check totality and completeness, and the output size bound and robustness if proven. The multi-step case is one induction over call sequences, using that every call preserves the imperative state invariant. |
 | **Imperative safety** | the imperative implementation has no out-of-bounds access, no integer overflow or wraparound, terminates, and uses no recursion and no heap allocation (R-DES-05, R-PERF-04, R-PERF-05); it uses no division at all, as R-PERF-03 requires, so in particular no division by zero. Frame conditions: input buffers are never written, the output never exceeds the caller-provided capacity (checked at run time against the capacity, with an error code on overflow, so this does not depend on the size bound), and a rejected packet leaves the decoder state unchanged (R-PERF-07). |
 | **Output size bound (stretch)** | every output vector has at most 9.5·F + 44 bits (green book table 5-1); this sets the static buffer sizes of the C API. A somewhat larger bound of the same order may be proven instead if it is markedly easier; the C API then sizes its buffers from the bound actually proven. |
+| **Robustness (stretch)** | the normative guarantee of the blue book (2.1): if the decoder was synchronised before a gap of at most V_t consecutive lost output vectors and F is known, decoding o_t yields M_t and I_t; and an output vector with f_t = r_t = 1 is decoded correctly from any decoder state. |
 
 ### Tested-only features
 
@@ -81,7 +82,6 @@ The following are outside the verified core and are validated by the test campai
 |---|---|
 | **Packet framing** | packet length and delimitation are carried by the transport layer (D2 F-04), in octets; the verified decoder receives one byte-aligned packet at a time, consumes exactly one output vector, returns the number of bits consumed and checks that the remaining bits are padding (green book 3.3.6 a to c). |
 | **Loss and corruption detection** | sequence counting and error detection are provided by the layers below (D2 F-01); the verified decoder receives the number of lost packets as an input. |
-| **Robustness** | the blue book guarantee (2.1) that an output vector is decodable after at most V_t consecutive lost vectors, and the robustness-level accounting V_t = R_t + C_t behind it; validated by loss-injection tests (R-SYS-04). Kept out of the proofs to avoid over-committing; may be revisited once the committed properties are done. |
 | **Recovery** | partial resynchronisation and backward decoding (green book 3.3.4, 3.3.5) and the per-bit validity mask (R-SYS-07, R-SYS-08, R-SYS-11); validated by test. |
 | **Parameter scheduling** | autonomous injection of p_t, f_t, r_t and R_t, and safe defaults after reset (R-SYS-10, R-OPS-01 to R-OPS-03); the verified encoder takes the flags as inputs at each step. |
 | **Multiplexing** | the presentation layer of red book clause 6 adapted to space packets and APIDs (R-SYS-15), the stream manager and the per-stream state allocation (R-SYS-02). |
@@ -190,4 +190,6 @@ object Decoder {
 ### Imperative Safety
 
 ### Output Size Bound (stretch)
+
+### Robustness (stretch)
 
