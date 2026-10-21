@@ -57,4 +57,7 @@ jobs:
       - name: Run Stainless verification gate
         if: runner.os == 'Linux'
         working-directory: python
+        env:
+          # One VC at a time: see N_THREADS in python/pocketplus/verify.py.
+          POCKETPLUS_VERIFY_PARALLEL: "1"
         run: pytest -s -m verify
