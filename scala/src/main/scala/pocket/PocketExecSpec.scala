@@ -159,6 +159,13 @@ object Encoder {
     * bluebook section 3.3.2), and derives the CompressionState for step t+1 from the resulting
     * mask/build/change state. For t <= R_t the blue book requires ft = rt = 1. The state keeps the
     * last min(t, 15) D_t's and p_t's, which is enough for any R_t (C_t is computed from `dts`, see compVt).
+    * 
+    * @param params CompressionState at time step t
+    * @param it input vector to compress at time step t
+    * @param pt new-mask flag for this step (bluebook section 3.3.2) indicating whether the mask should be updated according to new predictable bits
+    * @param ft send-mask flag for this step (bluebook section 3.3.2) indicating whether the mask should be sent in the output vector (must be true if t <= R_t)
+    * @param rt uncompressed flag for this step (bluebook section 3.3.2) indicating whether the input vector should be sent uncompressed in the output vector (must be true if t <= R_t)
+    * @param robustnessT robustness level for this step (also called R_t) (bluebook section 3.3.2), which is the number of previous steps to consider when computing the X_t vector
     */
   def step(params: CompressionState, it: List[Boolean], pt: Boolean, ft: Boolean, rt: Boolean, robustnessT: BigInt): (List[Boolean], CompressionState) = {
     require(params.f == it.size)
