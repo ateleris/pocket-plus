@@ -49,7 +49,7 @@ The core is written twice, in two subsets of Scala that Stainless verifies:
 | Integers | unbounded `BigInt` | bounded `BigInt`, compiled to 32-bit machine integers in C, absence of overflows checked by Stainless |
 | Bit vectors | singly linked lists of booleans, MSB first; bits are `Boolean`s; induction is the main proof tool | packed machine words with explicit bit lengths; bits are machine bits |
 | Step | pure function `(state, input, flags) → (output, state')` | procedure writing into a caller-provided output buffer and updating the state in place |
-| History | what the definitions need: the last 15 change vectors, the new-mask flags of the robustness window, exact `t` | 8 change vectors and a zero-run counter, 15 flag bits, saturating `t` (green book table 5-1) |
+| History | what the definitions need: the last 15 change vectors and new-mask flags (enough for any R_t), exact `t` | 8 change vectors and a zero-run counter, 15 flag bits, saturating `t` (green book table 5-1) |
 | Control flow | recursion over lists | loops with invariants, no recursion |
 | Role | object of the functional proofs; oracle for random cross-validation | source of the generated C; object of the safety proofs; subject of the acceptance tests |
 
@@ -95,22 +95,20 @@ The following are outside the verified core and are validated by the test campai
 
 ### Parameters
 
-The encoder state at step t is one immutable record, `CompressionState`. It groups two kinds of fields: the fixed configuration of the stream (F, M_0, R_t) and the derived state carried from one step to the next (t, I_(t-1), B_(t-1), M_(t-1), the change-vector history, C_t and the history of previous new-mask flags needed for c_t). The user-specified flags of a step (p_t, f_t, r_t) are inputs of `Encoder.step`, not part of the record. The well-formedness of a state is `paramsInvariant`; it is the invariant of the `CompressionState` class (expressed with the `require`), so a state can only be built when it holds.
+The encoder state at step t is one immutable record, `CompressionState`. It groups two kinds of fields: the fixed configuration of the stream (F, M_0) and the derived state carried from one step to the next (t, I_(t-1), B_(t-1), M_(t-1), the change-vector history and the history of previous new-mask flags needed for c_t). The user-specified parameters of a step (R_t, p_t, f_t, r_t) are inputs of `Encoder.step`, not part of the record. Since R_t may change at every step, the state keeps the history needed by the largest robustness level: V_t = R_t + C_t is at most 15 (blue book 5.3.2.2, eq. 14), so the last min(t, 15) change vectors and new-mask flags are enough for any R_t in 0..7. Each step computes C_t and V_t from this history for the R_t it is given, and uses only the part of the history they require. The well-formedness of a state is `paramsInvariant`; it is the invariant of the `CompressionState` class (expressed with the `require`), so a state can only be built when it holds.
 
 ```scala
 case class CompressionState(
     t: BigInt,
     f: BigInt,
     m0: List[Boolean],
-    robustnessT: BigInt,
     pts: List[Boolean],
-    ct: BigInt,
     itMinusOne: List[Boolean],
     btMinusOne: List[Boolean],
     mtMinusOne: List[Boolean],
     dts: List[List[Boolean]]
 ) {
-  require(paramsInvariant(t, f, m0, robustnessT, pts, ct, itMinusOne, btMinusOne, mtMinusOne, dts))
+  require(paramsInvariant(t, f, m0, pts, itMinusOne, btMinusOne, mtMinusOne, dts))
   ...
 }
 ```
@@ -121,16 +119,11 @@ Body of `paramsInvariant`:
 (t >= 0)
 && (1 <= f && f <= BasicEncodingFunctions.MAX_F)
 && (m0.size == f)
-&& (0 <= robustnessT && robustnessT <= 7)
-&& (if t <= robustnessT + ct then pts.size == t else pts.size == robustnessT + ct) // pts is the history of the previous new-mask flags p_{t-1}, p_{t-2}, ... over the "R_t + C_t" window (the current p_t is an input of the step), and therefore must be updated at every time step.
-&& (0 <= ct && ct <= min(t, 15) - robustnessT)
-// ct is the number of consecutive all-zero D_t's, starting right after the robustnessT
-// window and counting backwards in time (dts is newest-first).
-&& (ct == dts.drop(robustnessT).takeWhile(isAllZero).size)
+&& (pts.size == min(t, 15)) // pts is the history of the previous new-mask flags p_{t-1}, p_{t-2}, ..., newest first (the current p_t is an input of the step): V_t <= 15, so the last min(t,15) are enough for eq. 20 for any R_t.
 && (itMinusOne.size == f)
 && (btMinusOne.size == f && (if t == 0 then btMinusOne == build0(f) else true))
 && (mtMinusOne.size == f && (if t == 0 then mtMinusOne == m0 else true))
-&& (dts.forall(dv => dv.size == f) && dts.size == min(t, 15)) // last min(t,15) D_t's, newest first: enough history to compute both X_t (first robustnessT of them) and C_t (5.3.2.2, eq. 14)
+&& (dts.forall(dv => dv.size == f) && dts.size == min(t, 15)) // last min(t,15) D_t's, newest first: enough history to compute both X_t (first R_t of them) and C_t (5.3.2.2, eq. 14) for any R_t
 ```
 
 The decoder state, `DecompressionState`, carries no user-specified parameter: the blue book guarantees that M_0, R_t, p_t, f_t and r_t are all recoverable from the output vectors (section 3.1 and the note of 3.3.2). Given F, the decoder only needs the last reconstructed vector and a mask synchronised with the encoder's (2.1 a and b); F is fixed when the state is created (see `docs/questions.md`). `decoderView` projects an encoder state onto the fields the decoder can track, and `inSync` states that the decoder holds the encoder's view; the round-trip properties are stated with it.
@@ -155,10 +148,13 @@ object Encoder {
       it: List[Boolean],
       pt: Boolean,
       ft: Boolean,
-      rt: Boolean
+      rt: Boolean,
+      robustnessT: BigInt
   ): (List[Boolean], CompressionState)
 }
 ```
+
+Besides `params.f == it.size`, `Encoder.step` requires `0 <= robustnessT && robustnessT <= 7` and, as blue book 3.3.2 c) and d) demand, that `ft` and `rt` are both set while t <= R_t.
 
 ```scala
 object Decoder {
