@@ -59,7 +59,7 @@ What remains trusted is Stainless and the SMT solvers, the GenC translator, and 
 
 ### Verified properties
 
-The following properties will be proven with Stainless. Each has a section under _Properties_ below. Items marked _stretch_ are attempted after the committed ones and fall back to testing only if the proofs turn out too costly (proposal 2.9.1).
+The following properties will be proven with Stainless. They are theorems: each holds for every input vector, every state satisfying the invariant and every sequence of steps, not only for the test vectors, whereas the tested-only features below are validated on the vectors of D5. Each property has a section under _Properties_ below. Items marked _stretch_ are attempted after the committed ones and fall back to testing only if the proofs turn out too costly (proposal 2.9.1).
 
 | Property | Statement |
 |---|---|
