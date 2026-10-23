@@ -7,8 +7,8 @@
     // on Linux so bind-mounted files stay owned by you.
     "remoteUser": "vscode",
     "features": {
-        // JDK for Stainless/GenC: the JVM args used by native/build.sh and
-        // python/pocketplus/verify.py (--sun-misc-unsafe-memory-access)
+        // JDK for Stainless/GenC: the JVM args used by pocketplus/native/build.sh and
+        // pocketplus/python/pocketplus/verify.py (--sun-misc-unsafe-memory-access)
         // need JDK 23+; Temurin 25 matches CI. `version` is the exact SDKMAN
         // candidate identifier (check with `sdk list java | grep tem`),
         // not a bare major version: the feature's install.sh only accepts
@@ -46,7 +46,7 @@
                 "mutantdino.resourcemonitor"
             ],
             "settings": {
-                "python.defaultInterpreterPath": "${workspaceFolder}/python/env/bin/python"
+                "python.defaultInterpreterPath": "${workspaceFolder}/pocketplus/python/env/bin/python"
             }
         }
     }
