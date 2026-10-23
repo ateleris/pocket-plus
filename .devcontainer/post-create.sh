@@ -2,7 +2,7 @@
 # Dev-container bootstrap: the one-time steps from README "Build / test
 # (macOS / Linux)" — fetch the Stainless toolchain and create the Python venv.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../pocketplus"
 
 # Stainless jar + z3/cvc5 solvers (git-ignored; version pinned in install.sh).
 # The "linux" build's solver binaries are x86_64; on an Apple Silicon host
@@ -19,7 +19,8 @@ python/env/bin/pip install --quiet -r python/requirements.txt
 
 echo
 echo "Dev container ready. Typical workflow:"
-echo "  ./native/build.sh                            # GenC -> native/build/libpocketplus.so"
+echo "  cd pocketplus"
+echo "  ./native/build.sh                           # GenC -> native/build/libpocketplus.so"
 echo "  cd python"
 echo "  env/bin/python -m pytest -m 'not verify'     # interop suite"
 echo "  env/bin/python -m pytest -m verify           # Stainless verification gate (slow)"
