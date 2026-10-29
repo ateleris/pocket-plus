@@ -1,3 +1,7 @@
 /rhea-documentation
 docs/superpowers/
 /pocketmux/
+
+# Editor and dev-container state written at the workspace root (the dev container opens the repo root)
+.metals/
+.vscode/
