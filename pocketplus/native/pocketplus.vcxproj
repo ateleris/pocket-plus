@@ -85,7 +85,7 @@
 
   <!-- Always show the Scala source in the project for convenience. -->
   <ItemGroup>
-    <None Include="..\scala\src\main\scala\pocket\old\PocketPlus.scala" />
+    <None Include="..\scala\src\main\scala\pocket\PocketImperative.scala" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
