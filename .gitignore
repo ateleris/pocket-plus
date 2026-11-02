@@ -1,3 +1,5 @@
 /rhea-documentation
 docs/superpowers/
 /pocketmux/
+.metals*
+.vscode
