@@ -411,6 +411,34 @@ object Decoder {
 }
 
 
+object EncodeDecodeRoundTripProof {
+  import PocketExecSpec.{CompressionState, DecompressionState, decoderView, MAX_R}
+
+  /**
+    * This theorem states that for any valid compression state and input vector, if we encode the input vector using the encoder and then decode the resulting output vector using the decoder, we will recover the original input vector. This is a fundamental property of the encoding and decoding process, ensuring that no information is lost during compression and decompression.
+    * The state the decoder uses is the decoder view of the compressor's state, which corresponds to a synchronized state between the encoder and decoder.
+    * 
+    * Synchronization of the states is shown in another theorem.
+    *
+    * @return
+    */
+  def mainRoundTripTheorem(compressionParams: CompressionState, it: List[Boolean], pt: Boolean, ft: Boolean, rt: Boolean, robustnessT: BigInt): Unit = {
+    require(compressionParams.f == it.size)
+    require(0 <= robustnessT && robustnessT <= MAX_R) 
+    require(compressionParams.t > robustnessT || (ft && rt))
+    val (ot, nextCs) = Encoder.step(compressionParams, it, pt, ft, rt, robustnessT)
+    val decoderState = PocketExecSpec.decoderView(compressionParams)
+    val (decodedItOpt, nextDecoderState) = Decoder.step(decoderState, ot)
+    assert(decodedItOpt.isDefined)
+    assert(decodedItOpt.get == it)
+    assert(nextDecoderState.t == nextCs.t && nextDecoderState.f == nextCs.f && nextDecoderState.itMinusOne == it && nextDecoderState.mtMinusOne == nextCs.mtMinusOne)
+  }.ensuring(_ => {
+    val decoded = Decoder.step(PocketExecSpec.decoderView(compressionParams), Encoder.step(compressionParams, it, pt, ft, rt, robustnessT)._1) 
+    decoded._1.isDefined && decoded._1.get == it
+  })
+}
+
+
 
 /**
   * Bluebook section 5.2
@@ -1145,6 +1173,7 @@ object Utils {
   def boolToBigInt(b: Boolean): BigInt = if b then 1 else 0
   def min(a: BigInt, b: BigInt): BigInt = if a < b then a else b
 }
+
 object ListUtils {
   @ghost @inlineOnce @opaque
   def lemmaSplitAtIndexConcatSize[A](l1: List[A], l2: List[A], index: BigInt): Unit = {
