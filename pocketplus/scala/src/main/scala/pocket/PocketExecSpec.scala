@@ -304,11 +304,110 @@ object Decoder {
     * IMPORTANT: /!\ This function assumes that the received o_t is the whole packet to decode.
     */
   def step(st: DecompressionState, ot: List[Boolean]): (Option[List[Boolean]], DecompressionState) = {
-    (None(), st): (Option[List[Boolean]], DecompressionState) // TODO: implement the decompression step
+    decodeOutputVector(st, ot) match {
+      case Some((it, mt)) => (Some(it), DecompressionState(st.t + 1, st.f, it, mt))
+      case None() => (None(), st)
+    }: (Option[List[Boolean]], DecompressionState)
   }.ensuring(res => res match {
     case (Some(it), nextSt) => nextSt.t == st.t + 1 && nextSt.f == st.f && nextSt.itMinusOne == it && it.size == st.f
     case (None(), nextSt) => nextSt == st
   })
+
+  /**
+    * Mirror of [[Encoder.outputVector]]: parses o_t = h_t || q_t || u_t (bluebook section 5.3.3) and
+    * returns the reconstructed input vector I_t along with the mask M_t, or None if o_t is not a well
+    * formed packet for the given state (truncated field, invalid encoding, wrong COUNT(F) or trailing bits).
+    *
+    * M_t is read from q_t when f_t = 1. Otherwise it is recovered from h_t (bluebook section 2.1):
+    * outside X_t, D_t = 0 so M_t = M_{t-1}; at the positions of X_t, M_t = M_{t-1} XOR X_t if V_t = 0
+    * (then X_t = D_t), M_t is all ones if e_t = 0 (Y_t = 0), and M_t = NOT k_t if e_t = 1 (k_t = Y_t).
+    *
+    * @param st
+    * @param ot
+    * @return (it, mt)
+    */
+  def decodeOutputVector(st: DecompressionState, ot: List[Boolean]): Option[(List[Boolean], List[Boolean])] = {
+    // ht decoding
+    val xtSize = BasicEncodingFunctions.runLengthEncodingSize(ot, st.f)
+    if xtSize == -1 then None()
+    else {
+      val (xtEncoded, afterXt) = ot.splitAtIndex(xtSize)
+      val xt: List[Boolean] = BasicEncodingFunctions.runLengthDecode(xtEncoded, st.f)
+      if afterXt.size < 4 then None()
+      else {
+        val (vtBits, afterVt) = afterXt.splitAtIndex(4)
+        val vt: BigInt = BasicEncodingFunctions.decodeNBits(vtBits)
+        val etSize: BigInt = if vt == 0 || xt.forall(b => b == false) then 0 else 1
+        if afterVt.size < etSize then None()
+        else {
+          val (et, afterEt) = afterVt.splitAtIndex(etSize)
+          val ktSize: BigInt = if et == List(true) then xt.count(b => b == true) else 0
+          if afterEt.size < ktSize then None()
+          else {
+            val (kt, afterKt) = afterEt.splitAtIndex(ktSize)
+            val ctSize: BigInt = if kt.isEmpty then 0 else 1
+            if afterKt.size < ctSize + 1 then None()
+            else {
+              val (ct, afterCt) = afterKt.splitAtIndex(ctSize)
+              val dt: Boolean = afterCt.head
+              val afterHt = afterCt.tail
+
+              // mask recovered from ht, used when ft = 0
+              val mtFromHt: List[Boolean] =
+                if vt == 0 || xt.forall(b => b == false) then
+                  xor(st.mtMinusOne, xt.reverse)
+                else {
+                  val yt: List[Boolean] = if et == List(true) then kt else List.fill(xt.count(b => b == true))(false)
+                  // Y_t = BE(NOT(M_t).reverse, X_t) (see Encoder.outputVector), so insert it back into NOT(M_{t-1}).reverse
+                  not(BasicEncodingFunctions.bitInsertionFunction(not(st.mtMinusOne).reverse, xt, yt)).reverse
+                }
+
+              // qt decoding: (ft, mt, rest of the packet)
+              val qtDecoded: Option[(Boolean, List[Boolean], List[Boolean])] =
+                if dt then
+                  Some((false, mtFromHt, afterHt))
+                else if afterHt.isEmpty then
+                  None()
+                else if afterHt.head == false then
+                  Some((false, mtFromHt, afterHt.tail))
+                else {
+                  val mtDiffSize = BasicEncodingFunctions.runLengthEncodingSize(afterHt.tail, st.f)
+                  if mtDiffSize == -1 then None()
+                  else {
+                    val (mtDiffEncoded, afterQt) = afterHt.tail.splitAtIndex(mtDiffSize)
+                    Some((true, maskFromDiff(BasicEncodingFunctions.runLengthDecode(mtDiffEncoded, st.f).reverse), afterQt))
+                  }
+                }
+
+              // ut decoding
+              qtDecoded match {
+                case None() => None()
+                case Some((ft, mt, afterQt)) =>
+                  if !dt && afterQt.isEmpty then None()
+                  else {
+                    val rt: Boolean = !dt && afterQt.head
+                    val ut: List[Boolean] = if dt then afterQt else afterQt.tail
+                    if rt then {
+                      if ut.isEmpty then None()
+                      else {
+                        val (count, it) = BasicEncodingFunctions.countDecodePrefix(ut)
+                        if count == st.f && it.size == st.f then Some((it, mt)) else None()
+                      }
+                    } else {
+                      val selector: List[Boolean] = if (dt || ft) && ct == List(true) then or(xt.reverse, mt) else mt
+                      if ut.size == selector.count(b => b == true) then
+                        Some((BasicEncodingFunctions.bitInsertionFunction(st.itMinusOne, selector, ut), mt))
+                      else
+                        None()
+                    }
+                  }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 }
 
 
@@ -350,6 +449,31 @@ object BasicEncodingFunctions {
         bitExtractionMsbFirst(a.tail, btl)
     }
   }
+
+  /**
+    * Inverse of [[bitExtractionFunction]]: writes `bits` at the indexes where b is one, and keeps the bits of `base`
+    * elsewhere. `bits` is in BE(a,b) order, i.e., its first bit goes at the last matching position (closest to the LSB).
+    *
+    * @param base
+    * @param b
+    * @param bits
+    */
+  def bitInsertionFunction(base: List[Boolean], b: List[Boolean], bits: List[Boolean]): List[Boolean] = {
+    require(base.size == b.size && bits.size == b.count(bit => bit == ONE))
+    bitInsertionMsbFirst(base, b, bits.reverse)
+  }.ensuring(res => res.size == b.size)
+
+  /** Inverse of [[bitExtractionMsbFirst]]: writes `bits` in scan order at the indexes where b is one, scanning from the MSB. */
+  private def bitInsertionMsbFirst(base: List[Boolean], b: List[Boolean], bits: List[Boolean]): List[Boolean] = {
+    require(base.size == b.size && bits.size == b.count(bit => bit == ONE))
+    b match {
+      case Nil() => Nil()
+      case Cons(bh, btl) if bh == ONE =>
+        Cons(bits.head, bitInsertionMsbFirst(base.tail, btl, bits.tail))
+      case Cons(bh, btl) =>
+        Cons(base.head, bitInsertionMsbFirst(base.tail, btl, bits))
+    }
+  }.ensuring(res => res.size == b.size)
 
   /**
     * Encode the list of bits using run-length encoding defined in the blue book (Section 5.2.3, page 5-2).
@@ -407,6 +531,35 @@ object BasicEncodingFunctions {
             leadingZeros ++ (ONE :: restDecoded)
     }
   }.ensuring(res => res.size == expectedSize)
+
+  /**
+    * Given a list of bits whose prefix is a run-length encoding (Blue book Section 5.2.3, page 5-2) of a vector of
+    * size expectedSize, return the length of that prefix, i.e., up to and including the '10' terminator.
+    * Return -1 if the prefix is not a valid encoding: invalid or truncated COUNT, missing terminator, or the runs
+    * exceed expectedSize. When the result is not -1, runLengthDecode on the prefix does not hit any of its invalid cases.
+    *
+    * @param l
+    * @param expectedSize
+    */
+  def runLengthEncodingSize(l: List[Boolean], expectedSize: BigInt): BigInt = {
+    require(expectedSize >= 0 && expectedSize <= MAX_F)
+    decreases(l.size)
+    l match {
+      case Nil() => BigInt(-1)
+      case Cons(true, Cons(false, _)) => BigInt(2)
+      case Cons(hd, tl) =>
+        val countSize = countDecodeSize(l)
+        if countSize <= 0 || countSize > l.size then
+          BigInt(-1) // Invalid or truncated COUNT
+        else
+          val (currentCount, rest) = countDecodePrefix(l)
+          if currentCount <= 0 || currentCount > expectedSize then
+            BigInt(-1) // Invalid COUNT, or runs exceeding expectedSize
+          else
+            val restSize = runLengthEncodingSize(rest, expectedSize - currentCount)
+            if restSize == -1 then BigInt(-1) else countSize + restSize
+    }
+  }.ensuring(res => res == -1 || (2 <= res && res <= l.size))
 
 
   /**
@@ -707,6 +860,30 @@ object BasicEncodingFunctions {
     }
   }.ensuring(_ => runLengthDecode(runLengthEncode(a), a.size) == a)
 
+  @ghost @inlineOnce @opaque
+  def lemmaRunLengthEncodingSizeCorrectOnValidInput(a: List[Boolean]): Unit = {
+    require(a.size <= MAX_F)
+    decreases(a.size)
+    val encoded = runLengthEncode(a)
+    val (leadingZeros, rest) = splitLeadingZeros(a)
+    rest match {
+      case Nil() =>
+        assert(encoded == List(ONE, ZERO))
+      case Cons(b, tl) =>
+        val n = leadingZeros.size + 1
+        val tlEncoded = runLengthEncode(tl)
+        assert(encoded == countEncode(n) ++ tlEncoded)
+        lemmaCountDecodeSizeCorrect(n, countEncode(n))
+        lemmaCountDecodeSizeIsNotAffectedBySuffix(n, countEncode(n), tlEncoded)
+        assert(countDecodeSize(encoded) == countEncode(n).size)
+        lemmaCountEncodeDecodeRoundTripWithSuffix(n, tlEncoded)
+        assert(countDecodePrefix(encoded) == (n, tlEncoded))
+        lemmaRunLengthEncodingSizeCorrectOnValidInput(tl)
+        assert(runLengthEncodingSize(tlEncoded, tl.size) == tlEncoded.size)
+        assert(a.size - n == tl.size)
+    }
+  }.ensuring(_ => runLengthEncodingSize(runLengthEncode(a), a.size) == runLengthEncode(a).size)
+
 
   /**
     * Main lemma for round-trip property of COUNT encode and decode WITH AN ARBITRARY SUFFIX, as defined in the blue book (Section 5.2.2, page 5-2).
@@ -952,6 +1129,18 @@ object Utils {
       case Cons(a, tl) => tl ++ List(false)
     }
   }.ensuring(res => res.size == aa.size)
+
+  /** Inverse of `xor(m, leftShift(m))`: m_{f-1} = d_{f-1} and m_i = d_i XOR m_{i+1}. */
+  def maskFromDiff(dd: List[Boolean]): List[Boolean] = {
+    dd match {
+      case Nil() => Nil()
+      case Cons(d, Nil()) => List(d)
+      case Cons(d, dtl) => {
+        val mtl = maskFromDiff(dtl)
+        xor(d, mtl.head) :: mtl
+      }
+    }
+  }.ensuring(res => res.size == dd.size)
 
   def boolToBigInt(b: Boolean): BigInt = if b then 1 else 0
   def min(a: BigInt, b: BigInt): BigInt = if a < b then a else b

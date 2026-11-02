@@ -27,6 +27,15 @@ the array-based `Decompressor` in `PocketPlus.scala`, over randomized packet seq
 at several values of `F`.
 
 ```bash
+sbt "runMain pocket.test.RoundTripTest"
+```
+
+Round-trips randomized packet sequences (fixed seed, 50 runs of 120 steps) through
+`Encoder.step` and `Decoder.step` (in `PocketExecSpec.scala`), with random `R_t`, `p_t`,
+`f_t`, `r_t`. It checks that every input vector is recovered and that the decoder state
+stays in sync with the encoder (`decoderView`). It also checks that malformed packets are rejected.
+
+```bash
 sbt "runMain pocket.Main"
 ```
 
