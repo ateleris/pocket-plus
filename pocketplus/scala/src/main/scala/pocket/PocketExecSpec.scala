@@ -927,8 +927,13 @@ object EncodeDecodeRoundTripProof {
     Decoder.decodeOutputVector(decoderView(params), res._1) == Some((it, res._3))
   })
 
+
+
+  // --------------------------------------------------------------------- MAIN ROUND TRIP THEOREMS --------------------------------------------------------------------------------
   /**
-    * This theorem states that for any valid compression state and input vector, if we encode the input vector using the encoder and then decode the resulting output vector using the decoder, we will recover the original input vector. This is a fundamental property of the encoding and decoding process, ensuring that no information is lost during compression and decompression.
+    * This theorem states that for any valid compression state and input vector, if we encode the input vector using the encoder and then decode the resulting output vector
+    * using the decoder, we will recover the original input vector. This is a fundamental property of the encoding and decoding process, 
+    * ensuring that no information is lost during compression and decompression.
     * The state the decoder uses is the decoder view of the compressor's state, which corresponds to a synchronized state between the encoder and decoder.
     * 
     * Synchronization of the states is shown in another theorem.
@@ -951,15 +956,35 @@ object EncodeDecodeRoundTripProof {
     assert(Decoder.decodeOutputVector(decoderState, ot).get._2 == encodedMt)
     assert(Decoder.decodeOutputVector(decoderState, ot).get._1.size == compressionParams.f)
 
-
-
-
     assert(decodedItOpt.isDefined)
     assert(decodedItOpt.get == it)
     assert(nextDecoderState.t == nextCs.t && nextDecoderState.f == nextCs.f && nextDecoderState.itMinusOne == it && nextDecoderState.mtMinusOne == nextCs.mtMinusOne)
   }.ensuring(_ => {
-    val decoded = Decoder.step(PocketExecSpec.decoderView(compressionParams), Encoder.step(compressionParams, it, pt, ft, rt, robustnessT)._1) 
+    val (ot, nextCs) = Encoder.step(compressionParams, it, pt, ft, rt, robustnessT)
+    val decoded = Decoder.step(PocketExecSpec.decoderView(compressionParams), ot) 
     decoded._1.isDefined && decoded._1.get == it
+  })
+
+
+  @ghost @inlineOnce @opaque
+  def mainStateSynchronizationTheorem(compressionParams: CompressionState, it: List[Boolean], pt: Boolean, ft: Boolean, rt: Boolean, robustnessT: BigInt): Unit = {
+    require(compressionParams.f == it.size)
+    require(0 <= robustnessT && robustnessT <= MAX_R) 
+    require(compressionParams.t > robustnessT || (ft && rt))
+    val (ot, nextCs) = Encoder.step(compressionParams, it, pt, ft, rt, robustnessT)
+    val decoderState = PocketExecSpec.decoderView(compressionParams)
+    val (decodedItOpt, nextDecoderState) = Decoder.step(decoderState, ot)
+
+    lemmaDecodeOutputVector(compressionParams, it, pt, ft, rt, robustnessT)
+
+    assert(nextDecoderState.t == nextCs.t)
+    assert(nextDecoderState.f == nextCs.f)
+    assert(nextDecoderState.itMinusOne == it)
+    assert(nextDecoderState.mtMinusOne == nextCs.mtMinusOne)
+  }.ensuring(_ => {
+    val (ot, nextCs) = Encoder.step(compressionParams, it, pt, ft, rt, robustnessT)
+    val (decodedItOpt, decoderStateAfter) = Decoder.step(PocketExecSpec.decoderView(compressionParams), ot) 
+    decoderStateAfter == PocketExecSpec.decoderView(nextCs)
   })
 }
 
