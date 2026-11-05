@@ -15,7 +15,9 @@ decoded, 0x01 present but not decodable with an accuracy guarantee, 0x02 lost/dr
 **Encoder output is diffed bytewise only.** It is a concatenation of byte-aligned compressed packets
 with no length prefix, and packet lengths follow from the RLE-coded mask content, so locating packet
 `t` needs what amounts to a decoder. The encoder report therefore gives a byte offset and says that
-packet attribution is unavailable.
+packet attribution is unavailable. What it can attribute is the input: the first yellow-book input
+rule the vector breaks (``encoder_rules``), where the expected output ends, and whether the adapter
+emitted packets past that point.
 
 Keep the diff and render core pure (bytes in, structured diff out): `resolve_vector` is the only
 function here allowed to touch the filesystem.
@@ -26,6 +28,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from pocketbench import encoder_rules
+from pocketbench.encoder_rules import Violation
 from pocketbench.records import STATUS_DECODED, STATUS_LOST, STATUS_UNDECODABLE
 
 _STATUS_NAME = {
@@ -152,6 +156,8 @@ class ExplainResult:
     byte_diff: ByteDiff
     decoder: DecoderDiff | None = None
     reason: str = ""       # why the run stopped early, empty when it processed every record
+    violation: Violation | None = None  # the first input rule an encoder vector breaks
+    packets_out: int | None = None      # records the adapter wrote, None without usable output
 
     @property
     def identical(self) -> bool:
@@ -430,6 +436,8 @@ def summary_lines(r: ExplainResult, *, max_frames: int = MAX_LISTED_FRAMES) -> l
     out = [f"{r.phase.upper()}  {r.impl}  {r.vector}"]
     if r.ran and r.reason:
         out.append(f"  run {r.reason}")
+    if r.violation is not None:
+        out.append(_violation_line(r.violation, r.packets_out))
     if not r.ran:
         out.append(f"  adapter did not produce output (exit {r.returncode})")
         if r.stderr.strip():
@@ -479,6 +487,15 @@ def summary_lines(r: ExplainResult, *, max_frames: int = MAX_LISTED_FRAMES) -> l
     return out
 
 
+def _violation_line(v: Violation, packets_out: int | None) -> str:
+    ends = "is empty" if v.t == 0 else f"holds packets 0..{v.t - 1}"
+    line = f"  {v}, so the expected output {ends}"
+    if packets_out is not None:
+        did = encoder_rules.outcome(v, packets_out)
+        line += f"; adapter emitted {packets_out} packets" + (f": {did}" if did else "")
+    return line
+
+
 def _byte_line(bd: ByteDiff) -> str:
     if bd.first_diff_offset is None:
         return "  no differing byte in the common prefix (one output is truncated)"
@@ -490,7 +507,8 @@ def _byte_line(bd: ByteDiff) -> str:
 
 def build_result(
     *, impl: str, vector: str, phase: str, ran: bool, returncode: int, stderr: str,
-    expected: bytes, actual: bytes, reason: str = "",
+    expected: bytes, actual: bytes, reason: str = "", violation: Violation | None = None,
+    packets_out: int | None = None,
 ) -> ExplainResult:
     """Assemble an :class:`ExplainResult` from ground truth and produced bytes.
 
@@ -499,8 +517,8 @@ def build_result(
     """
     return ExplainResult(
         impl=impl, vector=vector, phase=phase, ran=ran, returncode=returncode, stderr=stderr,
-        expected=expected, actual=actual, reason=reason,
-        byte_diff=diff_bytes(expected, actual),
+        expected=expected, actual=actual, reason=reason, violation=violation,
+        packets_out=packets_out, byte_diff=diff_bytes(expected, actual),
         decoder=diff_decoder(expected, actual) if phase == "decoder" and ran else None,
     )
 

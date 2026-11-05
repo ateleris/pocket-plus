@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pocketbench import adapter, conformance, explain as explain_mod, orchestrate, profiling, report
+from pocketbench import encoder_rules
 from pocketbench import sweep as sweep_mod
 from pocketbench import validate as validate_mod
 from pocketbench.benchmark import BenchMetrics, BuildInfo
@@ -592,6 +593,9 @@ class PocketBench:
                         expected=v.expected_path.read_bytes(),
                         actual=vr.data or b"",
                         reason="" if vr.run.completed else vr.run.reason,
+                        violation=encoder_rules.first_violation(v.input_path.read_bytes())
+                        if v.phase == "encoder" else None,
+                        packets_out=conformance.packets_out(vr),
                     ))
         return ExplainRun(results=results)
 

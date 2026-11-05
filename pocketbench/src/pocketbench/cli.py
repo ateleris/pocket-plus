@@ -25,6 +25,7 @@ from pocketbench.api import (
     SelectionError,
     VectorNotFound,
 )
+from pocketbench.conformance import rule_summary
 from pocketbench.explain import summary_lines
 from pocketbench.orchestrate import ImplUnavailable
 
@@ -338,6 +339,10 @@ def conformance(
     for r in run.results:
         table.add_row(r.impl, f"{r.total:,}", f"{r.passed:,}", f"{r.failed:,}")
     console.print(table)
+    for r in run.results:
+        if r.rules:
+            console.print(f"{r.impl}: encoder failures by input rule: {rule_summary(r)}",
+                          highlight=False)
     for r in run.results:
         console.print(f"[dim]{r.impl}: full log -> {r.results_file}[/dim]")
 
