@@ -429,6 +429,16 @@ object EncodeDecodeRoundTripProof {
     val (ot, nextCs) = Encoder.step(compressionParams, it, pt, ft, rt, robustnessT)
     val decoderState = PocketExecSpec.decoderView(compressionParams)
     val (decodedItOpt, nextDecoderState) = Decoder.step(decoderState, ot)
+
+    assert(Decoder.decodeOutputVector(decoderState, ot).isDefined)
+    val (encodedIt, encodedBt, encodedMt, encodedDt) = Encoder.outputVector(compressionParams, it, pt, ft, rt, robustnessT)
+    assert(Decoder.decodeOutputVector(decoderState, ot).get._1 == it)
+    assert(Decoder.decodeOutputVector(decoderState, ot).get._2 == encodedMt)
+    assert(Decoder.decodeOutputVector(decoderState, ot).get._1.size == compressionParams.f)
+
+
+
+
     assert(decodedItOpt.isDefined)
     assert(decodedItOpt.get == it)
     assert(nextDecoderState.t == nextCs.t && nextDecoderState.f == nextCs.f && nextDecoderState.itMinusOne == it && nextDecoderState.mtMinusOne == nextCs.mtMinusOne)
