@@ -106,6 +106,8 @@ object Utils {
     lemmaToIntBigIntConversionBothDirections(list.size, arr.length - from)
     lemmaToIntBigIntConversionBothDirections(list.size, j)
     assert(j >= 0)
+    assert(arr.length - from == list.size.toInt)
+    assert(j < arr.length - from)
     assert(j < list.size.toInt)
     assert(BigInt(j) >= 0 && BigInt(j) < list.size)
     list match {

@@ -54,9 +54,9 @@ case class IntArray(
     ghostExpr({
       Utils.lemmaSameArrayListContentImpliesSameLength(data, 0, toList)
       Utils.lemmaToIntBigIntConversionBothDirections(toList.size, data.length)
-      Utils.compareBigIntPreservedByToInt(i, size)
+      Utils.compareBigIntPreservedByToInt(i, toList.size)
+      Utils.lemmaConversionBackForth(i)
       assert(i.toInt >= 0 && i.toInt < data.length)
-      Utils.sameArrayListContent(data, 0, toList)
       Utils.lemmaSameArrayListContentPreservedByUpdated(
         data,
         0,
@@ -64,10 +64,8 @@ case class IntArray(
         i.toInt,
         v
       )
-      Utils.lemmaSameArrayListContentImpliesSameLength(data, 0, toList)
-      Utils.lemmaToIntBigIntConversionBothDirections(toList.size, data.length)
-      Utils.compareBigIntPreservedByToInt(i, size)
-      unfold(size)
+      assert(BigInt(i.toInt - 0) == i)
+      assert(Utils.sameArrayListContent(data.updated(i.toInt, v), 0, toList.updated(i, v)))
     })
 
     toList = toList.updated(i, v)

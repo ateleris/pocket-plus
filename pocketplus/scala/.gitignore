@@ -1,0 +1,31 @@
+# --- sbt / Scala build output ---
+target/
+project/target/
+project/project/
+.bsp/
+.scala-build/
+*.class
+*.tasty
+*.log
+hs_err_pid*
+.jvmopts
+
+# --- Metals / Bloop ---
+.metals/
+.bloop/
+metals.sbt
+project/metals.sbt
+project/**/metals.sbt
+
+# --- VS Code ---
+.vscode/
+*.code-workspace
+
+# --- Stainless ---
+.stainless-cache/
+stainless/
+smt_out/
+stainless-stack-trace.txt
+
+# --- OS ---
+.DS_Store
