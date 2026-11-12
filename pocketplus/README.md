@@ -91,13 +91,14 @@ env/bin/python -m pytest -m verify         # Stainless verification gate (slow)
   in `native/generated/` is never hand-edited.
 - The C is built as **C99** (`-std=c99 -pedantic` / `/clang:-std=c99`) with warnings as errors:
   `-Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wpointer-arith -Wconversion
-  -Werror`. The flag set is defined twice — `std`/`warn` in `native/build.sh` and `PPClangOptions`
-  in `native/pocketplus.vcxproj` — and the two must be kept in sync. C99 rather than C11 because
-  the GenC output relies on variable-length arrays, which C11 demotes to optional. Two warnings are
-  waived for `native/generated/pocketplus.c` only (it is machine-written): `-Wno-parentheses` and,
-  until the step bodies of `PocketImperative.scala` are written, `-Wno-unused-parameter`. Every
-  platform builds with the gate on, and CI adds a second Linux pass with `CC=clang` — gcc and clang
-  warn about disjoint things.
+  -Werror`, plus `-Wmissing-variable-declarations` where the compiler has it (clang, and gcc from
+  version 14; `build.sh` probes for it). The flag set is defined twice — `std`/`warn` in
+  `native/build.sh` and `PPClangOptions` in `native/pocketplus.vcxproj` — and the two must be kept
+  in sync. C99 rather than C11 because the GenC output relies on variable-length arrays, which C11
+  demotes to optional. Two warnings are waived for `native/generated/pocketplus.c` only (it is
+  machine-written): `-Wno-parentheses` and, until the step bodies of `PocketImperative.scala` are
+  written, `-Wno-unused-parameter`. Every platform builds with the gate on, and CI adds a second
+  Linux pass with `CC=clang` — gcc and clang warn about disjoint things.
 - **32-bit builds.** The flight target is 32-bit; `build.sh` honours `CC`, so
   `CC="cc -m32" ./native/build.sh` produces an i386 library (the dev container ships
   `gcc-multilib`/`libc6-dev-i386` on x86 hosts for this; CI does the same). It is a *compile* gate

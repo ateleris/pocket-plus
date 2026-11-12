@@ -37,6 +37,17 @@ esac
 # -Wundef is deliberately absent: the generated header tests `#elif __GNUC__>=3`, undefined on MSVC.
 std="-std=c99 -pedantic"
 warn="-Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wpointer-arith -Wconversion -Werror"
+cc="${CC:-cc}"
+
+# -Wmissing-variable-declarations is to globals what -Wmissing-prototypes is to functions: each must
+# be `static` or declared in a header. It holds since Stainless 0.10.4, where GenC emits the Scala
+# constants as `static const` instead of exported globals. clang has the flag, gcc only from version
+# 14, and gcc rejects a -W option it does not know, so it is added when the compiler accepts it.
+if $cc -Wmissing-variable-declarations -fsyntax-only -x c /dev/null >/dev/null 2>&1; then
+  warn="$warn -Wmissing-variable-declarations"
+else
+  echo "[cc] $cc has no -Wmissing-variable-declarations, building without it"
+fi
 
 # native/generated/ is machine-written and never hand-edited, so warnings we cannot fix at the
 # Scala source are waived for that file only; the hand-written shim is compiled fully strict.
@@ -46,7 +57,6 @@ genc_waive="-Wno-parentheses -Wno-unused-parameter"
 
 mkdir -p "$here/build"
 obj="$here/build"
-cc="${CC:-cc}"
 echo "[cc] pocketplus.c"
 $cc $std $warn $genc_waive -O2 -fPIC -I"$here/generated" -c "$here/generated/pocketplus.c" -o "$obj/pocketplus.o"
 echo "[cc] pp_shim.c"
