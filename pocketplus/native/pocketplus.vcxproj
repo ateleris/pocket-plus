@@ -46,12 +46,12 @@
        -Wundef is deliberately absent: the generated header tests `#elif __GNUC__>=3`. -->
   <PropertyGroup>
     <PPClangOptions>/clang:-std=c99 /clang:-pedantic /clang:-Wall /clang:-Wextra /clang:-Wshadow /clang:-Wstrict-prototypes /clang:-Wmissing-prototypes /clang:-Wpointer-arith /clang:-Wconversion /clang:-Werror</PPClangOptions>
-    <!-- Waived for native/generated/ only (machine-written, never hand-edited): GenC emits an unused
-         `State` local in main, and drops the parentheses the Scala already has around `a || (b && c)`.
+    <!-- Waived for native/generated/ only (machine-written, never hand-edited): GenC drops the
+         parentheses the Scala already has around `a || (b && c)`.
          -Wno-unused-parameter is temporary: the stub step bodies of PocketImperative.scala ignore
          their flags. These must be appended *after* PPClangOptions — a later -Wall re-enables what
          an earlier -Wno- switched off. -->
-    <PPClangWaiversGenerated>/clang:-Wno-unused-variable /clang:-Wno-parentheses /clang:-Wno-unused-parameter</PPClangWaiversGenerated>
+    <PPClangWaiversGenerated>/clang:-Wno-parentheses /clang:-Wno-unused-parameter</PPClangWaiversGenerated>
   </PropertyGroup>
 
   <ItemDefinitionGroup>

@@ -40,10 +40,9 @@ warn="-Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wpointer-
 
 # native/generated/ is machine-written and never hand-edited, so warnings we cannot fix at the
 # Scala source are waived for that file only; the hand-written shim is compiled fully strict.
-#   -Wunused-variable:  `main` needs a `given State` for StdOut.println that GenC emits but never uses
 #   -Wparentheses:      GenC drops the parentheses the Scala already has around `a || (b && c)`
 #   -Wunused-parameter: temporary, the stub step bodies of PocketImperative.scala ignore their flags
-genc_waive="-Wno-unused-variable -Wno-parentheses -Wno-unused-parameter"
+genc_waive="-Wno-parentheses -Wno-unused-parameter"
 
 mkdir -p "$here/build"
 obj="$here/build"
