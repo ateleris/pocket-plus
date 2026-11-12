@@ -5,7 +5,7 @@ POCKET+ / CCSDS 124.0-B-1 lossless housekeeping-telemetry codec, formally specif
 in a small C ABI, and exercised from Python.
 
 ```
-scala/src/main/scala/pocket/old/PocketPlus.scala   the single source of truth (Stainless-verifiable, GenC-compatible)
+scala/src/main/scala/pocket/PocketImperative.scala   the imperative codec the C is generated from (Stainless-verifiable, GenC-compatible)
 native/                  C project: GenC output + hand-written shared-library shim (pp_* API)
 python/                  Python project: ctypes interop + pytest round-trip suite
 tools/stainless/         Stainless toolchain (jar + z3 + cvc5) — downloaded by install.sh, git-ignored
@@ -34,7 +34,7 @@ Open `pocket-plus.slnx`. The first time, accept VS's prompt to create the virtua
 `python/requirements.txt` (or it is created automatically on first build).
 
 **Build Solution** in **Debug** or **Release**:
-  1. regenerates `native/generated/pocketplus.{c,h}` from `scala/src/main/scala/pocket/old/PocketPlus.scala` (only when the
+  1. regenerates `native/generated/pocketplus.{c,h}` from `scala/src/main/scala/pocket/PocketImperative.scala` (only when the
      Scala changed — incremental),
   2. compiles `pocketplus.dll` with ClangCL,
   3. runs the Python `pytest` interop suite, excluding the slow `verify` test (a failing test fails
@@ -85,24 +85,28 @@ env/bin/python -m pytest -m verify         # Stainless verification gate (slow)
 ## Notes
 
 - The codec API the DLL exports (`pp_compressor_create`, `pp_compress`, `pp_decompressor_create`,
-  `pp_decompress`, …) is hand-written in `native/src/pp_shim.c`; it owns the buffers so Python only
-  passes flat `(bool*, length)` arrays. The GenC output in `native/generated/` is never hand-edited.
+  `pp_decompress`, …) is hand-written in `native/src/pp_shim.c` around the entry points of
+  `PocketImperative.scala`. It allocates the state buffers once per stream, checks every argument
+  before calling the generated code, and takes vectors packed MSB first into bytes. The GenC output
+  in `native/generated/` is never hand-edited.
 - The C is built as **C99** (`-std=c99 -pedantic` / `/clang:-std=c99`) with warnings as errors:
   `-Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wpointer-arith -Wconversion
-  -Werror`. The flag set is defined twice — `std`/`warn` in `native/build.sh` and `PPClangOptions`
-  in `native/pocketplus.vcxproj` — and the two must be kept in sync. C99 rather than C11 because
-  the GenC output relies on variable-length arrays, which C11 demotes to optional. Two warnings are
-  waived for `native/generated/pocketplus.c` only (it is machine-written): `-Wno-unused-variable`
-  and `-Wno-parentheses`. Every platform builds with the gate on, and CI adds a second Linux pass
-  with `CC=clang` — gcc and clang warn about disjoint things.
+  -Werror`, plus `-Wmissing-variable-declarations` where the compiler has it (clang, and gcc from
+  version 14; `build.sh` probes for it). The flag set is defined twice — `std`/`warn` in
+  `native/build.sh` and `PPClangOptions` in `native/pocketplus.vcxproj` — and the two must be kept
+  in sync. C99 rather than C11 because the GenC output relies on variable-length arrays, which C11
+  demotes to optional. Two warnings are waived for `native/generated/pocketplus.c` only (it is
+  machine-written): `-Wno-parentheses` and, until the step bodies of `PocketImperative.scala` are
+  written, `-Wno-unused-parameter`. Every platform builds with the gate on, and CI adds a second
+  Linux pass with `CC=clang` — gcc and clang warn about disjoint things.
 - **32-bit builds.** The flight target is 32-bit; `build.sh` honours `CC`, so
   `CC="cc -m32" ./native/build.sh` produces an i386 library (the dev container ships
   `gcc-multilib`/`libc6-dev-i386` on x86 hosts for this; CI does the same). It is a *compile* gate
   only: a 32-bit `.so` cannot be loaded by the 64-bit CPython the `pytest` suite runs under, and
   Ubuntu no longer packages an i386 CPython, so running the suite against a 32-bit build needs an
   i386 container. The codec itself is word-size agnostic — every value in the generated code and
-  the shim is `int32_t`/`bool`, and the ctypes binding passes only opaque handles and flat
-  `(bool*, int32_t)` pairs, never a struct layout.
+  the shim is `int32_t`/`uint8_t`/`bool`, and the ctypes binding passes only opaque handles, byte
+  buffers and `int32_t`/`bool` scalars, never a struct layout.
 - The verification gate is **red by design today**: the Scala carries no verification invariants yet,
   so the array-bounds / overflow / termination VCs are unproven. It turns green as invariants are added.
 - To regenerate or verify outside VS, the same `java -jar tools/stainless/lib/...jar` invocations

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the POCKET+ shared library on macOS/Linux (the Unix equivalent of pocketplus.vcxproj):
-# regenerate pocketplus.c from PocketPlus.scala via Stainless GenC when needed, then compile
+# regenerate pocketplus.c from PocketImperative.scala via Stainless GenC when needed, then compile
 # the generated codec + pp_shim into native/build/libpocketplus.{dylib,so}.
 set -euo pipefail
 
@@ -10,12 +10,12 @@ repo="$(dirname "$here")"
 jar="$(echo "$repo"/tools/stainless/lib/stainless-dotty-standalone-*.jar)"
 [ -f "$jar" ] || { echo "Stainless jar not found; run ./install.sh first." >&2; exit 1; }
 
-scala_src="$repo/scala/src/main/scala/pocket/old/PocketPlus.scala"
+scala_src="$repo/scala/src/main/scala/pocket/PocketImperative.scala"
 genc_c="$here/generated/pocketplus.c"
 jvm_args="-Xss512m --sun-misc-unsafe-memory-access=allow"
 
 if [ ! -f "$genc_c" ] || [ "$scala_src" -nt "$genc_c" ]; then
-  echo "[GenC] PocketPlus.scala -> pocketplus.c"
+  echo "[GenC] PocketImperative.scala -> pocketplus.c"
   (cd "$repo" && java $jvm_args -jar "$jar" --config-file=false --genc --skip-verification --genc-output="$genc_c" "$scala_src")
   [ -f "$genc_c" ] || { echo "GenC did not produce $genc_c" >&2; exit 1; }
 fi
@@ -37,16 +37,26 @@ esac
 # -Wundef is deliberately absent: the generated header tests `#elif __GNUC__>=3`, undefined on MSVC.
 std="-std=c99 -pedantic"
 warn="-Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wpointer-arith -Wconversion -Werror"
+cc="${CC:-cc}"
 
-# native/generated/ is machine-written and never hand-edited, so two warnings we cannot fix at the
+# -Wmissing-variable-declarations is to globals what -Wmissing-prototypes is to functions: each must
+# be `static` or declared in a header. It holds since Stainless 0.10.4, where GenC emits the Scala
+# constants as `static const` instead of exported globals. clang has the flag, gcc only from version
+# 14, and gcc rejects a -W option it does not know, so it is added when the compiler accepts it.
+if $cc -Wmissing-variable-declarations -fsyntax-only -x c /dev/null >/dev/null 2>&1; then
+  warn="$warn -Wmissing-variable-declarations"
+else
+  echo "[cc] $cc has no -Wmissing-variable-declarations, building without it"
+fi
+
+# native/generated/ is machine-written and never hand-edited, so warnings we cannot fix at the
 # Scala source are waived for that file only; the hand-written shim is compiled fully strict.
-#   -Wunused-variable: `main` needs a `given State` for StdOut.println that GenC emits but never uses
-#   -Wparentheses:     GenC drops the parentheses the Scala already has around `a || (b && c)`
-genc_waive="-Wno-unused-variable -Wno-parentheses"
+#   -Wparentheses:      GenC drops the parentheses the Scala already has around `a || (b && c)`
+#   -Wunused-parameter: temporary, the stub step bodies of PocketImperative.scala ignore their flags
+genc_waive="-Wno-parentheses -Wno-unused-parameter"
 
 mkdir -p "$here/build"
 obj="$here/build"
-cc="${CC:-cc}"
 echo "[cc] pocketplus.c"
 $cc $std $warn $genc_waive -O2 -fPIC -I"$here/generated" -c "$here/generated/pocketplus.c" -o "$obj/pocketplus.o"
 echo "[cc] pp_shim.c"
