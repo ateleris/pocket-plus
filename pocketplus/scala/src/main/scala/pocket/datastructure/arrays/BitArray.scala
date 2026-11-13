@@ -28,16 +28,7 @@ case class BitArray(private val data: Array[Byte], private var _isize: Int, @gho
     BitArray.sameArrayListContent(0, toList, data, _size)
   }
 
- 
-
   @ghost @pure def getList: List[Boolean] = toList
-
-  @pure @ghost def sizeBigInt: BigInt = {
-    require(valid)
-    _size
-  }.ensuring(res =>
-    valid && res == toList.size && res >= 0 && res <= 8 * BigInt(data.length)
-  )
 
   @pure def size: Int = {
     require(valid)
@@ -82,7 +73,7 @@ case class BitArray(private val data: Array[Byte], private var _isize: Int, @gho
     val newByte = BitArray.lowByte(if (v) byte | mask else byte & ~mask)
     ghostExpr(BitArray.lemmaSameArrayListContentPreservedByUpdated(0, toList, data, _size, BigInt(i), v, newByte))
 
-    toList = toList.updated(BigInt(i), v)
+    ghostExpr({toList = toList.updated(BigInt(i), v)})
     data(byteIndex) = newByte
   }.ensuring(_ => valid && old(this).toList.updated(BigInt(i), v) == toList)
 
@@ -102,7 +93,7 @@ case class BitArray(private val data: Array[Byte], private var _isize: Int, @gho
     val newByte = BitArray.lowByte(if (v) byte | mask else byte & ~mask)
     ghostExpr(BitArray.lemmaSameArrayListContentPreservedByUpdated(0, toList, data, _size, ii, v, newByte))
 
-    toList = toList.updated(ii, v)
+    ghostExpr({toList = toList.updated(ii, v)})
     data(byteIndex) = newByte
   }.ensuring(_ => valid && old(this).toList.updated(ii, v) == toList)
 }
