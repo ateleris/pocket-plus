@@ -66,3 +66,6 @@ in the spec (uses `stainless.conf`). Pass extra Stainless flags as `$1`, e.g.
     - proves that the decoding an encoded vector returns the original vector, for all possible inputs and states
   - `mainStateSynchronizationTheorem`: PocketExecSpec.scala:970
     - proves that the decoder state stays in sync with the encoder state, for all possible inputs and states, after encoding and decoding a vector
+
+- invertibility of sub-functions:
+  - `lemmarunLengthEncodeRoundTrip`: PocketExecSpec.scala:1420
