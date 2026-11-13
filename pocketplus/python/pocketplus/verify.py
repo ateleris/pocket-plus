@@ -21,7 +21,7 @@ _REPO = os.path.dirname(os.path.dirname(_HERE))  # pocketplus -> python -> repo 
 SCALA_DIR = os.path.join(_REPO, "scala")
 SCALA_SOURCE_FILES_DIR = os.path.join(SCALA_DIR, "src", "main", "scala", "pocket")
 STAINLESS_DIR = os.path.join(_REPO, "tools", "stainless")
-JAR = os.path.join(STAINLESS_DIR, "lib", "stainless-dotty-standalone-0.10.3.jar")
+JAR = os.path.join(STAINLESS_DIR, "lib", "stainless-dotty-standalone-0.10.4.jar")
 CONFIG_FILE = os.path.join(SCALA_DIR, "stainless.conf")
 CACHE_DIR = os.path.join(_REPO, "build", ".stainless-cache")
 REPORT_JSON = os.path.join(CACHE_DIR, "report.json")
@@ -30,6 +30,7 @@ REPORT_JSON = os.path.join(CACHE_DIR, "report.json")
 FILES_TO_VERIFY = [
     # os.path.join(SCALA_DIR, "PocketPlus.scala"),
     os.path.join(SCALA_SOURCE_FILES_DIR, "PocketExecSpec.scala"),
+    os.path.join(SCALA_SOURCE_FILES_DIR, "PocketImperative.scala"),
     os.path.join(SCALA_SOURCE_FILES_DIR, "datastructure", "arrays", "BitArray.scala"),
     os.path.join(SCALA_SOURCE_FILES_DIR, "datastructure", "arrays", "ByteArray.scala"),
     os.path.join(SCALA_SOURCE_FILES_DIR, "datastructure", "arrays", "IntArray.scala"),
