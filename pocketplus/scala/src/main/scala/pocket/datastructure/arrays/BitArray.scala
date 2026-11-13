@@ -7,6 +7,76 @@ import stainless.lang.StaticChecks.*
 import datastructure.Utils
 
 
+/**
+  * Represents a bit array, underlined by an array of bytes. The specification is given by a list
+  * of booleans.
+  * The case class carries the size of the array as a ghost variable, which is equal to the length of the list, as it might not be a multiple of 8. If the size is not a multiple of 8, the last bits of the last byte are ignored.
+  *
+  * @param data
+  * @param toList
+  * @param size
+  */
+case class BitArray(private val data: Array[Byte], private var _isize: Int, @ghost private var toList: List[Boolean], @ghost private var _size: BigInt) {
+
+  // Links the content of the list and the content of the array, and _size with the actual size of the array.
+  @ghost @pure def valid: Boolean = {
+    0 <= _size && _size <= 8 * BigInt(data.length) &&
+    _size == toList.size && 
+    _size <= BigInt(Int.MaxValue) &&
+    _isize == _size.toInt &&
+    BitArray.sameArrayListContent(0, toList, data, _size)
+  }
+
+ 
+
+  @ghost @pure def getList: List[Boolean] = toList
+
+  @pure @ghost def sizeBigInt: BigInt = {
+    require(valid)
+    _size
+  }.ensuring(res =>
+    valid && res == toList.size && res >= 0 && res <= 8 * BigInt(data.length)
+  )
+
+  @pure def size: Int = {
+    require(valid)
+    ghostExpr(Utils.lemmaToIntBigIntConversionBothDirections(_size, 0))
+    _isize
+  }.ensuring(res =>
+    valid && res == toList.size.toInt && res >= 0
+  )
+
+  def apply(i: Int): Boolean = {
+    require(valid)
+    require(i >= 0 && i < size)
+    ghostExpr({
+      Utils.lemmaToIntBigIntConversionBothDirections(_size, i)
+      BitArray.lemmaIntBitIndex(i)
+      BitArray.lemmaBitIndexInBounds(BigInt(i), data.length)
+      BitArray.lemmaSameArrayListContentImpliesSameApply(0, toList, data, _size, BigInt(i))
+    })
+    val byte = data(i / 8)
+    (byte & (1 << (i % 8))) != 0
+  }.ensuring(res => valid && res == toList(BigInt(i)))
+
+  def update(i: Int, v: Boolean): Unit = {
+    require(valid)
+    require(i >= 0 && i < size)
+    ghostExpr({
+      Utils.lemmaToIntBigIntConversionBothDirections(_size, i)
+      BitArray.lemmaIntBitIndex(i)
+      BitArray.lemmaBitIndexInBounds(BigInt(i), data.length)
+    })
+    val byteIndex = i / 8
+    val mask = 1 << (i % 8)
+    val byte = data(byteIndex)
+    val newByte = BitArray.lowByte(if (v) byte | mask else byte & ~mask)
+    ghostExpr(BitArray.lemmaSameArrayListContentPreservedByUpdated(0, toList, data, _size, BigInt(i), v, newByte))
+
+    toList = toList.updated(BigInt(i), v)
+    data(byteIndex) = newByte
+  }.ensuring(_ => valid && old(this).toList.updated(BigInt(i), v) == toList)
+}
 
 object BitArray {
   @ghost @pure def bitIndex(i: BigInt): (BigInt, BigInt) = {
@@ -132,75 +202,4 @@ object BitArray {
       unfold(sameArrayListContent(from, list.updated(i, v), array.updated((i / 8).toInt, newByte), _size))
     }
   }.ensuring(_ => sameArrayListContent(from, list.updated(i, v), array.updated((i / 8).toInt, newByte), _size))
-}
-
-/**
-  * Represents a bit array, underlined by an array of bytes. The specification is given by a list
-  * of booleans.
-  * The case class carries the size of the array as a ghost variable, which is equal to the length of the list, as it might not be a multiple of 8. If the size is not a multiple of 8, the last bits of the last byte are ignored.
-  *
-  * @param data
-  * @param toList
-  * @param size
-  */
-case class BitArray(private val data: Array[Byte], private var _isize: Int, @ghost private var toList: List[Boolean], @ghost private var _size: BigInt) {
-
-  // Links the content of the list and the content of the array, and _size with the actual size of the array.
-  @ghost @pure def valid: Boolean = {
-    0 <= _size && _size <= 8 * BigInt(data.length) &&
-    _size == toList.size && 
-    _size <= BigInt(Int.MaxValue) &&
-    _isize == _size.toInt &&
-    BitArray.sameArrayListContent(0, toList, data, _size)
-  }
-
- 
-
-  @ghost @pure def getList: List[Boolean] = toList
-
-  @pure @ghost def sizeBigInt: BigInt = {
-    require(valid)
-    _size
-  }.ensuring(res =>
-    valid && res == toList.size && res >= 0 && res <= 8 * BigInt(data.length)
-  )
-
-  @pure def size: Int = {
-    require(valid)
-    ghostExpr(Utils.lemmaToIntBigIntConversionBothDirections(_size, 0))
-    _isize
-  }.ensuring(res =>
-    valid && res == toList.size.toInt && res >= 0
-  )
-
-  def apply(i: Int): Boolean = {
-    require(valid)
-    require(i >= 0 && i < size)
-    ghostExpr({
-      Utils.lemmaToIntBigIntConversionBothDirections(_size, i)
-      BitArray.lemmaIntBitIndex(i)
-      BitArray.lemmaBitIndexInBounds(BigInt(i), data.length)
-      BitArray.lemmaSameArrayListContentImpliesSameApply(0, toList, data, _size, BigInt(i))
-    })
-    val byte = data(i / 8)
-    (byte & (1 << (i % 8))) != 0
-  }.ensuring(res => valid && res == toList(BigInt(i)))
-
-  def update(i: Int, v: Boolean): Unit = {
-    require(valid)
-    require(i >= 0 && i < size)
-    ghostExpr({
-      Utils.lemmaToIntBigIntConversionBothDirections(_size, i)
-      BitArray.lemmaIntBitIndex(i)
-      BitArray.lemmaBitIndexInBounds(BigInt(i), data.length)
-    })
-    val byteIndex = i / 8
-    val mask = 1 << (i % 8)
-    val byte = data(byteIndex)
-    val newByte = BitArray.lowByte(if (v) byte | mask else byte & ~mask)
-    ghostExpr(BitArray.lemmaSameArrayListContentPreservedByUpdated(0, toList, data, _size, BigInt(i), v, newByte))
-
-    toList = toList.updated(BigInt(i), v)
-    data(byteIndex) = newByte
-  }.ensuring(_ => valid && old(this).toList.updated(BigInt(i), v) == toList)
 }
