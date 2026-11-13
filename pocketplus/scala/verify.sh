@@ -17,4 +17,4 @@ JAVA_OPTS="-Dparallel=${PARALLEL:-2} ${JAVA_OPTS:-}" stainless\
   ./src/main/scala/pocket/datastructure/arrays/ByteArray.scala\
   ./src/main/scala/pocket/datastructure/arrays/IntArray.scala\
   ./src/main/scala/pocket/datastructure/Utils.scala\
-  --config-file=stainless.conf $1
+  --config-file=stainless.conf -Dparallel=${PARALLEL:-2} $1
