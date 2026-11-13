@@ -57,6 +57,14 @@ case class BitArray64BitsIndex(private val data: Array[Byte], private var _lsize
     (byte & (1 << (i % 8).toInt)) != 0
   }.ensuring(res => valid && res == toList(BigInt(i)))
 
+  @ghost def apply(ii: BigInt): Boolean = {
+    require(valid)
+    require(ii >= 0 && ii < _size)
+    BitArray64BitsIndex.lemmaSameArrayListContentImpliesSameApply(0, toList, data, _size, ii)
+    val byte = data((ii / 8).toInt)
+    (byte & (1 << (ii % 8).toInt)) != 0
+  }.ensuring(res => valid && res == toList(ii))
+
   def update(i: Long, v: Boolean): Unit = {
     require(valid)
     require(i >= 0 && i < size)
@@ -73,6 +81,20 @@ case class BitArray64BitsIndex(private val data: Array[Byte], private var _lsize
     toList = toList.updated(BigInt(i), v)
     data(byteIndex) = newByte
   }.ensuring(_ => valid && old(this).toList.updated(BigInt(i), v) == toList)
+
+  @opaque def update(ii: BigInt, v: Boolean): Unit = {
+    require(valid)
+    require(ii >= 0 && ii < _size)
+    ghostExpr(BitArray64BitsIndex.lemmaBitIndexInBounds(ii, data.length))
+    val byteIndex = (ii / 8).toInt
+    val mask = 1 << (ii % 8).toInt
+    val byte = data(byteIndex)
+    val newByte = BitArray64BitsIndex.lowByte(if (v) byte | mask else byte & ~mask)
+    ghostExpr(BitArray64BitsIndex.lemmaSameArrayListContentPreservedByUpdated(0, toList, data, _size, ii, v, newByte))
+
+    toList = toList.updated(ii, v)
+    data(byteIndex) = newByte
+  }.ensuring(_ => valid && old(this).toList.updated(ii, v) == toList)
 }
 
 object BitArray64BitsIndex {

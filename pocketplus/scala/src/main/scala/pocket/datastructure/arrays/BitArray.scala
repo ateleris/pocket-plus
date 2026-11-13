@@ -20,6 +20,7 @@ case class BitArray(private val data: Array[Byte], private var _isize: Int, @gho
 
   // Links the content of the list and the content of the array, and _size with the actual size of the array.
   @ghost @pure def valid: Boolean = {
+    data.length <= Int.MaxValue / 8 && 
     0 <= _size && _size <= 8 * BigInt(data.length) &&
     _size == toList.size && 
     _size <= BigInt(Int.MaxValue) &&
@@ -59,6 +60,14 @@ case class BitArray(private val data: Array[Byte], private var _isize: Int, @gho
     (byte & (1 << (i % 8))) != 0
   }.ensuring(res => valid && res == toList(BigInt(i)))
 
+  @ghost def apply(ii: BigInt): Boolean = {
+    require(valid)
+    require(ii >= 0 && ii < _size)
+    BitArray.lemmaSameArrayListContentImpliesSameApply(0, toList, data, _size, ii)
+    val byte = data((ii / 8).toInt)
+    (byte & (1 << (ii % 8).toInt)) != 0
+  }.ensuring(res => valid && res == toList(ii))
+
   def update(i: Int, v: Boolean): Unit = {
     require(valid)
     require(i >= 0 && i < size)
@@ -76,6 +85,26 @@ case class BitArray(private val data: Array[Byte], private var _isize: Int, @gho
     toList = toList.updated(BigInt(i), v)
     data(byteIndex) = newByte
   }.ensuring(_ => valid && old(this).toList.updated(BigInt(i), v) == toList)
+
+  @opaque def update(ii: BigInt, v: Boolean): Unit = {
+    require(valid)
+    require(ii >= 0 && ii < _size)
+    val i = ii.toInt
+    ghostExpr({
+      Utils.lemmaToIntBigIntConversionBothDirections(_size, i)
+      Utils.lemmaConversionBackForth(ii)
+      BitArray.lemmaIntBitIndex(i)
+      BitArray.lemmaBitIndexInBounds(ii, data.length)
+    })
+    val byteIndex = i / 8
+    val mask = 1 << (i % 8)
+    val byte = data(byteIndex)
+    val newByte = BitArray.lowByte(if (v) byte | mask else byte & ~mask)
+    ghostExpr(BitArray.lemmaSameArrayListContentPreservedByUpdated(0, toList, data, _size, ii, v, newByte))
+
+    toList = toList.updated(ii, v)
+    data(byteIndex) = newByte
+  }.ensuring(_ => valid && old(this).toList.updated(ii, v) == toList)
 }
 
 object BitArray {
