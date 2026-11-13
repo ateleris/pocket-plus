@@ -52,3 +52,17 @@ intermediate bit vector, for eyeballing the packet layout against the blue book
 Runs `stainless-dotty` on `PocketExecSpec.scala` to verify the contracts/preconditions
 in the spec (uses `stainless.conf`). Pass extra Stainless flags as `$1`, e.g.
 `./verify.sh --watch`.
+
+### Main interest points
+
+- main encoder implementation: PocketExecSpec.scala:170
+  - which uses the `outputVector` function which follows the blue book closely: PocketExecSpec.scala:216
+
+- main decoder implementation: PocketExecSpec.scala:306
+  - which uses the `decodeOutputVector` function which mirrors the `outputVector` function: PocketExecSpec.scala:329
+
+- main invertibility theorems:
+  - `mainRoundTripTheorem`: PocketExecSpec.scala:944
+    - proves that the decoding an encoded vector returns the original vector, for all possible inputs and states
+  - `mainStateSynchronizationTheorem`: PocketExecSpec.scala:970
+    - proves that the decoder state stays in sync with the encoder state, for all possible inputs and states, after encoding and decoding a vector
