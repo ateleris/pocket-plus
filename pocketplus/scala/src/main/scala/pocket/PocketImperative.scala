@@ -23,6 +23,9 @@ import datastructure.arrays.BitArray
   *    `StaticChecks.require` and only exists for the prover; so do the class invariants. `ensuring`
   *    and the loop `invariant` are extension methods, which cannot be qualified at the call: theirs
   *    are the `StaticChecks` ones throughout, through the import of its two implicit classes.
+  *  - The buffers of a call are built by the C caller, so an entry point assumes nothing of their
+  *    ghost state: it requires `wellSized`, which is checked at run time, and establishes their
+  *    validity itself. The bit arrays of a state are covered by the class invariant instead.
   *  - This file is tested as generated C, through the C API, while the functional specification keeps
   *    its JVM tests.
   *  - Every buffer is allocated by the caller, inside the state or passed to the call. Nothing is
@@ -163,9 +166,9 @@ object PocketImperative {
       */
     @cCode.`export`
     def encoderInit(st: EncoderState, initialMask: BitArray): Unit = {
-      StaticChecks.require(initialMask.valid)
-      require(initialMask.size == st.f)
+      require(initialMask.wellSized && initialMask.storedSize == st.f)
       ghostExpr(st.lemmaInvariant())
+      ghostExpr(initialMask.establishValid())
       st.t = 0
       st.lastInput.clear()
       copyBits(initialMask, st.mask)
@@ -198,11 +201,14 @@ object PocketImperative {
         robustnessT: Int,
         out: BitArray
     ): Int = {
-      StaticChecks.require(input.valid && out.valid)
-      require(input.size == st.f)
+      require(input.wellSized && input.storedSize == st.f)
       require(0 <= robustnessT && robustnessT <= Layout.MaxR)
       require(st.t > robustnessT || (sendMaskFlag && uncompressedFlag)) // blue book 3.3.2 c) and d); exact, as t saturates above MaxR
-      require(out.size <= Layout.maxOutputBits(Layout.MaxF))
+      require(out.wellSized && out.storedSize <= Layout.maxOutputBits(Layout.MaxF))
+      ghostExpr({
+        input.establishValid()
+        out.establishValid()
+      })
       0
     }.ensuring(res => out.valid && res <= out.size)
   }
@@ -235,8 +241,12 @@ object PocketImperative {
       */
     @cCode.`export`
     def decodeStep(st: DecoderState, packet: BitArray, out: BitArray): Int = {
-      StaticChecks.require(packet.valid && out.valid)
-      require(out.size == st.f)
+      require(packet.wellSized)
+      require(out.wellSized && out.storedSize == st.f)
+      ghostExpr({
+        packet.establishValid()
+        out.establishValid()
+      })
       Errors.ErrMalformed
     }.ensuring(res => packet.valid && res <= packet.size)
   }

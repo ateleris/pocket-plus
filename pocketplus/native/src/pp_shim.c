@@ -13,9 +13,11 @@ struct PPCompressor   { EncoderState st; };
 struct PPDecompressor { DecoderState st; };
 
 /* The generated code takes every bit vector as a BitArray: a byte buffer and a size in bits, MSB
-   first. The Scala side requires each one to be valid, a ghost condition GenC cannot turn into an
-   assert, so the two constructors below are what establishes it: 0 <= bits <= 8 * length, and
-   length <= INT32_MAX / 8 (which bits <= MAX_PACKET_BITS gives). */
+   first. What it needs of one is BitArray.wellSized: 0 <= bits <= 8 * length, and
+   length <= INT32_MAX / 8 (which bits <= MAX_PACKET_BITS gives). The two constructors below
+   guarantee it. For the buffers of a call (view) the entry points also assert it, and prove the
+   rest from there; for the buffers of a state (alloc_bits) it is part of the state invariant, which
+   the generated code assumes. */
 
 /* A zeroed bit array of `bits` bits in (bits + 7) / 8 >= 1 bytes; data.data is NULL if the
    allocation failed. */
