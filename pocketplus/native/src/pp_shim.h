@@ -2,11 +2,11 @@
  * pp_shim — hand-written, malloc-backed lifecycle + ABI over the GenC-generated POCKET+ codec
  * (scala/src/main/scala/pocket/PocketImperative.scala).
  *
- * The generated entry points take a state struct full of (uint8_t*, int32_t) array views that the
- * caller must allocate, and assert their preconditions. This shim hides the struct behind opaque
- * handles, allocates every buffer once at creation (R-PERF-04), and checks the arguments before each
- * call so a bad argument returns PP_ERR_ARGUMENT instead of tripping an assert (R-PERF-07).
- * Generated code is unchanged.
+ * The generated entry points take a state struct full of bit arrays (a (uint8_t*, int32_t) view and
+ * a size in bits) that the caller must allocate, and assert their preconditions. This shim hides
+ * the struct behind opaque handles, allocates every buffer once at creation (R-PERF-04), and checks
+ * the arguments before each call so a bad argument returns PP_ERR_ARGUMENT instead of tripping an
+ * assert (R-PERF-07). Generated code is unchanged.
  *
  * Vectors of f bits are packed MSB first into pp_bytes_per_vector(f) bytes; the unused low bits of
  * the last byte must be zero. Every vector buffer passed to or from a call has exactly that size.

@@ -88,6 +88,8 @@
   <!-- Always show the Scala source in the project for convenience. -->
   <ItemGroup>
     <None Include="..\scala\src\main\scala\pocket\PocketImperative.scala" />
+    <None Include="..\scala\src\main\scala\pocket\datastructure\arrays\BitArray.scala" />
+    <None Include="..\scala\src\main\scala\pocket\datastructure\Utils.scala" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

@@ -7,6 +7,10 @@
     <StainlessDir>$(RepoRoot)tools\stainless\</StainlessDir>
     <StainlessJar>$(StainlessDir)lib\stainless-dotty-standalone-0.10.4.jar</StainlessJar>
     <ScalaSource>$(RepoRoot)scala\src\main\scala\pocket\PocketImperative.scala</ScalaSource>
+    <!-- The data structures PocketImperative.scala is built on: GenC compiles them with it. Keep this
+         list in sync with scala_srcs in native/build.sh. -->
+    <BitArraySource>$(RepoRoot)scala\src\main\scala\pocket\datastructure\arrays\BitArray.scala</BitArraySource>
+    <UtilsSource>$(RepoRoot)scala\src\main\scala\pocket\datastructure\Utils.scala</UtilsSource>
     <GenCDir>$(RepoRoot)native\generated\</GenCDir>
     <GenCSource>$(GenCDir)pocketplus.c</GenCSource>
     <GenCHeader>$(GenCDir)pocketplus.h</GenCHeader>

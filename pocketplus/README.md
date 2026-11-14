@@ -34,8 +34,8 @@ Open `pocket-plus.slnx`. The first time, accept VS's prompt to create the virtua
 `python/requirements.txt` (or it is created automatically on first build).
 
 **Build Solution** in **Debug** or **Release**:
-  1. regenerates `native/generated/pocketplus.{c,h}` from `scala/src/main/scala/pocket/PocketImperative.scala` (only when the
-     Scala changed — incremental),
+  1. regenerates `native/generated/pocketplus.{c,h}` from `scala/src/main/scala/pocket/PocketImperative.scala` and the
+     `BitArray` it is built on, `scala/src/main/scala/pocket/datastructure/` (only when the Scala changed — incremental),
   2. compiles `pocketplus.dll` with ClangCL,
   3. runs the Python `pytest` interop suite, excluding the slow `verify` test (a failing test fails
      the build).
