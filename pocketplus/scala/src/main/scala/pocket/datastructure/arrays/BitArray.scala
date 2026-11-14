@@ -11,6 +11,7 @@ import datastructure.Utils
   * Represents a bit array, underlined by an array of bytes. The specification is given by a list
   * of booleans.
   * The case class carries the size of the array as a ghost variable, which is equal to the length of the list, as it might not be a multiple of 8. If the size is not a multiple of 8, the last bits of the last byte are ignored.
+  * Bits are packed MSB first: bit i of the list is bit 7 - i % 8 of byte i / 8, i.e., the one selected by the mask 0x80 >>> (i % 8).
   *
   * @param data
   * @param toList
@@ -48,7 +49,7 @@ case class BitArray(private val data: Array[Byte], private var _isize: Int, @gho
       BitArray.lemmaSameArrayListContentImpliesSameApply(0, toList, data, _size, BigInt(i))
     })
     val byte = data(i / 8)
-    (byte & (1 << (i % 8))) != 0
+    (byte & (0x80 >>> (i % 8))) != 0
   }.ensuring(res => valid && res == toList(BigInt(i)))
 
   @ghost def apply(ii: BigInt): Boolean = {
@@ -56,7 +57,7 @@ case class BitArray(private val data: Array[Byte], private var _isize: Int, @gho
     require(ii >= 0 && ii < _size)
     BitArray.lemmaSameArrayListContentImpliesSameApply(0, toList, data, _size, ii)
     val byte = data((ii / 8).toInt)
-    (byte & (1 << (ii % 8).toInt)) != 0
+    (byte & (0x80 >>> (ii % 8).toInt)) != 0
   }.ensuring(res => valid && res == toList(ii))
 
   def update(i: Int, v: Boolean): Unit = {
@@ -68,7 +69,7 @@ case class BitArray(private val data: Array[Byte], private var _isize: Int, @gho
       BitArray.lemmaBitIndexInBounds(BigInt(i), data.length)
     })
     val byteIndex = i / 8
-    val mask = 1 << (i % 8)
+    val mask = 0x80 >>> (i % 8)
     val byte = data(byteIndex)
     val newByte = BitArray.lowByte(if (v) byte | mask else byte & ~mask)
     ghostExpr(BitArray.lemmaSameArrayListContentPreservedByUpdated(0, toList, data, _size, BigInt(i), v, newByte))
@@ -88,7 +89,7 @@ case class BitArray(private val data: Array[Byte], private var _isize: Int, @gho
       BitArray.lemmaBitIndexInBounds(ii, data.length)
     })
     val byteIndex = i / 8
-    val mask = 1 << (i % 8)
+    val mask = 0x80 >>> (i % 8)
     val byte = data(byteIndex)
     val newByte = BitArray.lowByte(if (v) byte | mask else byte & ~mask)
     ghostExpr(BitArray.lemmaSameArrayListContentPreservedByUpdated(0, toList, data, _size, ii, v, newByte))
@@ -111,7 +112,7 @@ object BitArray {
       lemmaBitIndexInBounds(from, array.length)
       val (byteIndex, bIndex) = bitIndex(from)
       val byte = array(byteIndex.toInt)
-      val bit = (byte & (1 << bIndex.toInt)) != 0
+      val bit = (byte & (0x80 >>> bIndex.toInt)) != 0
       bit == list(from) && sameArrayListContent(from + 1, list, array, _size)
     }
   }
@@ -126,14 +127,14 @@ object BitArray {
   def lemmaLowByteBit(x: Int, c: Int): Unit = {
     require(0 <= c && c < 8)
     unfold(lowByte(x))
-  }.ensuring(_ => ((lowByte(x) & (1 << c)) != 0) == ((x & (1 << c)) != 0))
+  }.ensuring(_ => ((lowByte(x) & (0x80 >>> c)) != 0) == ((x & (0x80 >>> c)) != 0))
 
-  /** Setting (v) or clearing (!v) bit b of a byte changes bit b only. */
+  /** Setting (v) or clearing (!v) bit b of a byte, counting from the MSB, changes bit b only. */
   @ghost @opaque @inlineOnce
   def lemmaSetBit(byte: Byte, b: Int, c: Int, v: Boolean): Unit = {
     require(0 <= b && b < 8 && 0 <= c && c < 8)
   }.ensuring(_ =>
-    (((if (v) byte | (1 << b) else byte & ~(1 << b)) & (1 << c)) != 0) == (if (b == c) v else (byte & (1 << c)) != 0)
+    (((if (v) byte | (0x80 >>> b) else byte & ~(0x80 >>> b)) & (0x80 >>> c)) != 0) == (if (b == c) v else (byte & (0x80 >>> c)) != 0)
   )
 
   @ghost @pure @inline def bitIndexInBounds(i: BigInt, length: Int): Boolean = {
@@ -169,7 +170,7 @@ object BitArray {
     if (from < i) {
       lemmaSameArrayListContentImpliesSameApply(from + 1, list, array, _size, i)
     }
-  }.ensuring(_ => bitIndexInBounds(i, array.length) && ((array((i / 8).toInt) & (1 << (i % 8).toInt)) != 0) == list(i))
+  }.ensuring(_ => bitIndexInBounds(i, array.length) && ((array((i / 8).toInt) & (0x80 >>> (i % 8).toInt)) != 0) == list(i))
 
   @ghost @opaque @inlineOnce
   def lemmaUpdatedApply[T](list: List[T], i: BigInt, v: T, j: BigInt): Unit = {
@@ -186,17 +187,17 @@ object BitArray {
   @ghost @opaque @inlineOnce
   def lemmaUpdatedBit(array: Array[Byte], i: BigInt, v: Boolean, newByte: Byte, j: BigInt): Unit = {
     require(bitIndexInBounds(i, array.length) && bitIndexInBounds(j, array.length))
-    require(newByte == lowByte(if (v) array((i / 8).toInt) | (1 << (i % 8).toInt) else array((i / 8).toInt) & ~(1 << (i % 8).toInt)))
+    require(newByte == lowByte(if (v) array((i / 8).toInt) | (0x80 >>> (i % 8).toInt) else array((i / 8).toInt) & ~(0x80 >>> (i % 8).toInt)))
     val byte = array((i / 8).toInt)
-    val mask = 1 << (i % 8).toInt
+    val mask = 0x80 >>> (i % 8).toInt
     lemmaLowByteBit(if (v) byte | mask else byte & ~mask, (j % 8).toInt)
     lemmaSetBit(byte, (i % 8).toInt, (j % 8).toInt, v)
     Utils.compareBigIntPreservedByToInt(j / 8, i / 8)
     Utils.compareBigIntPreservedByToInt(j % 8, i % 8)
     assert((j == i) == (j / 8 == i / 8 && j % 8 == i % 8))
   }.ensuring(_ =>
-    ((array.updated((i / 8).toInt, newByte)((j / 8).toInt) & (1 << (j % 8).toInt)) != 0) ==
-      (if (j == i) v else (array((j / 8).toInt) & (1 << (j % 8).toInt)) != 0)
+    ((array.updated((i / 8).toInt, newByte)((j / 8).toInt) & (0x80 >>> (j % 8).toInt)) != 0) ==
+      (if (j == i) v else (array((j / 8).toInt) & (0x80 >>> (j % 8).toInt)) != 0)
   )
 
   /** Setting bit i of the array to v in the byte holding it, i.e., replacing that byte by newByte, updates the list at i. */
@@ -206,7 +207,7 @@ object BitArray {
     require(_size >= 0 && _size <= BigInt(Int.MaxValue) * 8 && from >= 0 && from <= _size && _size <= 8 * BigInt(array.length))
     require(sameArrayListContent(from, list, array, _size))
     require(0 <= i && i < _size && bitIndexInBounds(i, array.length))
-    require(newByte == lowByte(if (v) array((i / 8).toInt) | (1 << (i % 8).toInt) else array((i / 8).toInt) & ~(1 << (i % 8).toInt)))
+    require(newByte == lowByte(if (v) array((i / 8).toInt) | (0x80 >>> (i % 8).toInt) else array((i / 8).toInt) & ~(0x80 >>> (i % 8).toInt)))
     decreases(_size - from)
     assert(list.updated(i, v).size == _size)
     if (from < _size) {
@@ -216,7 +217,7 @@ object BitArray {
       unfold(sameArrayListContent(from, list, array, _size))
       lemmaSameArrayListContentPreservedByUpdated(from + 1, list, array, _size, i, v, newByte)
       val newArray = array.updated((i / 8).toInt, newByte)
-      assert(((newArray((from / 8).toInt) & (1 << (from % 8).toInt)) != 0) == list.updated(i, v)(from))
+      assert(((newArray((from / 8).toInt) & (0x80 >>> (from % 8).toInt)) != 0) == list.updated(i, v)(from))
       unfold(sameArrayListContent(from, list.updated(i, v), newArray, _size))
     } else {
       unfold(sameArrayListContent(from, list.updated(i, v), array.updated((i / 8).toInt, newByte), _size))
