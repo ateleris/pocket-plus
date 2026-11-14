@@ -71,18 +71,6 @@ object PocketImperative {
     val ErrArgument: Int = -3  // an argument is out of range or inconsistent with the state
   }
 
-  /** Sets every bit of `a` to zero. */
-  def clearBits(a: BitArray): Unit = {
-    StaticChecks.require(a.valid)
-    val n = a.size
-    var i = 0
-    (while (i < n) {
-      decreases(n - i)
-      a(i) = false
-      i += 1
-    }).invariant(0 <= i && i <= n && a.valid && a.size == n)
-  }.ensuring(_ => a.valid && a.size == old(a).size)
-
   /** Copies `src` into `dst`, of the same size. */
   def copyBits(src: BitArray, dst: BitArray): Unit = {
     StaticChecks.require(src.valid && dst.valid && src.size == dst.size)
@@ -188,10 +176,10 @@ object PocketImperative {
       require(initialMask.size == st.f)
       ghostExpr(st.lemmaInvariant())
       st.t = 0
-      clearBits(st.lastInput)
+      st.lastInput.clear()
       copyBits(initialMask, st.mask)
-      clearBits(st.build)
-      clearBits(st.changeHistory)
+      st.build.clear()
+      st.changeHistory.clear()
       fillBooleans(st.changeHistoryZero, true)
       st.historyHead = 0
       st.zeroRunBeyond = 0
@@ -238,8 +226,8 @@ object PocketImperative {
     def decoderInit(st: DecoderState): Unit = {
       ghostExpr(st.lemmaInvariant())
       st.t = 0
-      clearBits(st.lastInput)
-      clearBits(st.mask)
+      st.lastInput.clear()
+      st.mask.clear()
       st.unknownMasks = 0
       st.unknownInputs = 0
     }.ensuring(_ => st.t == 0)
