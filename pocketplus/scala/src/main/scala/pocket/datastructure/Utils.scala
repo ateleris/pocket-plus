@@ -161,6 +161,16 @@ object Utils {
   }.ensuring(_ => (a.toInt == b) == (a == BigInt(b)) && (a < BigInt(b)) == (a.toInt < b) && (a > BigInt(b)) == (a.toInt > b) && (a <= BigInt(b)) == (a.toInt <= b) && (a >= BigInt(b)) == (a.toInt >= b))
 
   @opaque @inlineOnce @ghost
+  def lemmaTimes8IntToLong(a: Int): Unit = {
+    require(a >= 0)
+  }.ensuring(_ => BigInt(8L * a) == 8 * BigInt(a))
+
+  @opaque @inlineOnce @ghost
+  def lemmaToLongBigIntConversionBothDirections(a: BigInt, b: Long): Unit = {
+    require(BigInt(Long.MinValue) <= a && a <= BigInt(Long.MaxValue))
+  }.ensuring(_ => (a.toLong == b) == (a == BigInt(b)) && (a < BigInt(b)) == (a.toLong < b) && (a > BigInt(b)) == (a.toLong > b) && (a <= BigInt(b)) == (a.toLong <= b) && (a >= BigInt(b)) == (a.toLong >= b))
+
+  @opaque @inlineOnce @ghost
   def lemmaConversionBackForth(a: BigInt): Unit = {
     require(Int.MinValue <= a && a <= Int.MaxValue)
   }.ensuring(_ => a == BigInt(a.toInt))
