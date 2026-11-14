@@ -13,6 +13,7 @@ import datastructure.Utils
   * of booleans.
   * The case class carries the size of the array as a ghost variable, which is equal to the length of the list, as it might not be a multiple of 8. If the size is not a multiple of 8, the last bits of the last byte are ignored.
   * Bits are packed MSB first: bit i of the list is bit 7 - i % 8 of byte i / 8, i.e., the one selected by the mask 0x80 >>> (i % 8).
+  * The executable code computes these indexes as i >>> 3 and i & 7: divisions only appear in ghost code.
   *
   * @param data
   * @param toList
@@ -49,8 +50,8 @@ case class BitArray(private val data: Array[UByte], private var _isize: Int, @gh
       BitArray.lemmaBitIndexInBounds(BigInt(i), data.length)
       BitArray.lemmaSameArrayListContentImpliesSameApply(0, toList, data, _size, BigInt(i))
     })
-    val byte = data(i / 8)
-    (byte.toInt & (0x80 >>> (i % 8))) != 0
+    val byte = data(i >>> 3)
+    (byte.toInt & (0x80 >>> (i & 7))) != 0
   }.ensuring(res => valid && res == toList(BigInt(i)))
 
   @ghost def apply(ii: BigInt): Boolean = {
@@ -69,8 +70,8 @@ case class BitArray(private val data: Array[UByte], private var _isize: Int, @gh
       BitArray.lemmaIntBitIndex(i)
       BitArray.lemmaBitIndexInBounds(BigInt(i), data.length)
     })
-    val byteIndex = i / 8
-    val mask = 0x80 >>> (i % 8)
+    val byteIndex = i >>> 3
+    val mask = 0x80 >>> (i & 7)
     val byte = data(byteIndex).toInt
     val newByte = BitArray.lowByte(if (v) byte | mask else byte & ~mask)
     ghostExpr(BitArray.lemmaSameArrayListContentPreservedByUpdated(0, toList, data, _size, BigInt(i), v, newByte))
@@ -89,8 +90,8 @@ case class BitArray(private val data: Array[UByte], private var _isize: Int, @gh
       BitArray.lemmaIntBitIndex(i)
       BitArray.lemmaBitIndexInBounds(ii, data.length)
     })
-    val byteIndex = i / 8
-    val mask = 0x80 >>> (i % 8)
+    val byteIndex = i >>> 3
+    val mask = 0x80 >>> (i & 7)
     val byte = data(byteIndex).toInt
     val newByte = BitArray.lowByte(if (v) byte | mask else byte & ~mask)
     ghostExpr(BitArray.lemmaSameArrayListContentPreservedByUpdated(0, toList, data, _size, ii, v, newByte))
@@ -142,11 +143,15 @@ object BitArray {
     0 <= i % 8 && i % 8 < 8 && 0 <= (i % 8).toInt && (i % 8).toInt < 8
   }
 
-  /** For a non-negative index, the Int byte and bit index computations agree with the BigInt ones. */
+  /** For a non-negative index, the Int byte and bit index computations agree with the BigInt ones, and the shift
+    * and mask that the executable code uses instead of a division (R-PERF-03) compute the same indexes. */
   @ghost @opaque @inlineOnce
   def lemmaIntBitIndex(i: Int): Unit = {
     require(i >= 0)
-  }.ensuring(_ => BigInt(i / 8) == BigInt(i) / 8 && BigInt(i % 8) == BigInt(i) % 8 && (BigInt(i) / 8).toInt == i / 8 && (BigInt(i) % 8).toInt == i % 8)
+  }.ensuring(_ =>
+    BigInt(i / 8) == BigInt(i) / 8 && BigInt(i % 8) == BigInt(i) % 8 && (BigInt(i) / 8).toInt == i / 8 && (BigInt(i) % 8).toInt == i % 8 &&
+    (i >>> 3) == i / 8 && (i & 7) == i % 8
+  )
 
   @ghost @opaque @inlineOnce
   def lemmaBitIndexInBounds(i: BigInt, length: Int): Unit = {
