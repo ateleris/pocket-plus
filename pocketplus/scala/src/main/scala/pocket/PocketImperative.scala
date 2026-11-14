@@ -2,7 +2,9 @@ package pocket
 
 import stainless.lang.{ghost => ghostExpr, *}
 import stainless.annotation.*
-import stainless.math.Unsigned.*
+import stainless.lang.StaticChecks
+import stainless.lang.StaticChecks.{Ensuring, WhileDecorations}
+import datastructure.arrays.BitArray
 
 /**
   * Imperative implementation of the POCKET+ core (CCSDS 124.0-B-1), in the GenC-compatible
@@ -10,10 +12,18 @@ import stainless.math.Unsigned.*
   * C API; the bodies are stubs until the refinement to [[PocketExecSpec]] is carried out.
   *
   * Conventions:
-  *  - A vector of F bits is packed MSB first into `Layout.bytesPerVector(F)` bytes; the unused low
-  *    bits of the last byte are zero.
-  *  - Bytes are `UByte` from `stainless.math.Unsigned`, generated as `uint8_t`. This file is tested as
-  *    generated C, through the C API, while the functional specification keeps its JVM tests.
+  *  - Bit vectors and bit streams are [[datastructure.arrays.BitArray]]s: bits packed MSB first into
+  *    unsigned bytes (`uint8_t` in the generated C), with the list of booleans they stand for as ghost
+  *    state, which is what relates them to the vectors of the functional specification. A vector of F
+  *    bits takes `Layout.bytesPerVector(F)` bytes; the unused low bits of the last byte are not part
+  *    of the vector and are never read.
+  *  - A precondition written with `require` is also emitted by GenC as an `assert` in the C. One that
+  *    mentions ghost state, such as the validity of a `BitArray`, is written with
+  *    `StaticChecks.require` and only exists for the prover; so do the class invariants. `ensuring`
+  *    and the loop `invariant` are extension methods, which cannot be qualified at the call: theirs
+  *    are the `StaticChecks` ones throughout, through the import of its two implicit classes.
+  *  - This file is tested as generated C, through the C API, while the functional specification keeps
+  *    its JVM tests.
   *  - Every buffer is allocated by the caller, inside the state or passed to the call. Nothing is
   *    allocated here (R-PERF-04) and no call writes outside the state and its output buffer (R-PERF-07).
   *  - Steps return an `Int`: a non-negative number of bits, or a negative error code from [[Errors]].
@@ -40,6 +50,13 @@ object PocketImperative {
       (f + 7) >>> 3
     }.ensuring(res => 1 <= res && res <= 8192)
 
+    /** Bits of one slot of the change history: a vector of f bits padded to whole bytes, so that every
+      * slot starts on a byte boundary. Slot k starts at bit `k * bitsPerSlot(f)`. */
+    def bitsPerSlot(f: Int): Int = {
+      require(1 <= f && f <= MaxF)
+      bytesPerVector(f) << 3
+    }.ensuring(res => f <= res && res <= 65536)
+
     /** Worst-case output vector length in bits, 9.5 * F + 44 (green book table 5-1). */
     @cCode.`export`
     def maxOutputBits(f: Int): Int = {
@@ -54,28 +71,29 @@ object PocketImperative {
     val ErrArgument: Int = -3  // an argument is out of range or inconsistent with the state
   }
 
-  /** Sets every byte of `a` to zero. */
-  def clearBytes(a: Array[UByte]): Unit = {
-    val n = a.length
+  /** Sets every bit of `a` to zero. */
+  def clearBits(a: BitArray): Unit = {
+    StaticChecks.require(a.valid)
+    val n = a.size
     var i = 0
     (while (i < n) {
       decreases(n - i)
-      a(i) = 0.toUByte
+      a(i) = false
       i += 1
-    }).invariant(0 <= i && i <= n && a.length == n)
-  }.ensuring(_ => a.length == old(a).length)
+    }).invariant(0 <= i && i <= n && a.valid && a.size == n)
+  }.ensuring(_ => a.valid && a.size == old(a).size)
 
-  /** Copies `src` into `dst`, of the same length. */
-  def copyBytes(src: Array[UByte], dst: Array[UByte]): Unit = {
-    require(src.length == dst.length)
-    val n = dst.length
+  /** Copies `src` into `dst`, of the same size. */
+  def copyBits(src: BitArray, dst: BitArray): Unit = {
+    StaticChecks.require(src.valid && dst.valid && src.size == dst.size)
+    val n = dst.size
     var i = 0
     (while (i < n) {
       decreases(n - i)
       dst(i) = src(i)
       i += 1
-    }).invariant(0 <= i && i <= n && src.length == n && dst.length == n)
-  }.ensuring(_ => dst.length == old(dst).length)
+    }).invariant(0 <= i && i <= n && src.valid && src.size == n && dst.valid && dst.size == n)
+  }.ensuring(_ => dst.valid && dst.size == old(dst).size)
 
   /** Sets every element of `a` to `v`. */
   def fillBooleans(a: Array[Boolean], v: Boolean): Unit = {
@@ -88,19 +106,20 @@ object PocketImperative {
     }).invariant(0 <= i && i <= n && a.length == n)
   }.ensuring(_ => a.length == old(a).length)
 
-  def encoderInvariant(f: Int, t: Int, lastInput: Array[UByte], mask: Array[UByte], build: Array[UByte], changeHistory: Array[UByte], changeHistoryZero: Array[Boolean], historyHead: Int, zeroRunBeyond: Int, newMaskHistory: Int, xt: Array[UByte], yt: Array[UByte]): Boolean = {
+  @ghost
+  def encoderInvariant(f: Int, t: Int, lastInput: BitArray, mask: BitArray, build: BitArray, changeHistory: BitArray, changeHistoryZero: Array[Boolean], historyHead: Int, zeroRunBeyond: Int, newMaskHistory: Int, xt: BitArray, yt: BitArray): Boolean = {
     1 <= f && f <= Layout.MaxF &&
     0 <= t && t <= Layout.TSaturation &&
-    lastInput.length == Layout.bytesPerVector(f) &&
-    mask.length == Layout.bytesPerVector(f) &&
-    build.length == Layout.bytesPerVector(f) &&
-    changeHistory.length == Layout.HistoryVectors * Layout.bytesPerVector(f) &&
+    lastInput.valid && lastInput.size == f &&
+    mask.valid && mask.size == f &&
+    build.valid && build.size == f &&
+    changeHistory.valid && changeHistory.size == Layout.HistoryVectors * Layout.bitsPerSlot(f) &&
     changeHistoryZero.length == Layout.HistoryVectors &&
     0 <= historyHead && historyHead < Layout.HistoryVectors &&
     0 <= zeroRunBeyond && zeroRunBeyond <= 8 &&
     0 <= newMaskHistory && newMaskHistory < 32768 &&
-    xt.length == Layout.bytesPerVector(f) &&
-    yt.length == Layout.bytesPerVector(f)
+    xt.valid && xt.size == f &&
+    yt.valid && yt.size == f
   }
 
   /** Encoder state of one stream, laid out as in green book table 5-1; sized by the caller for a fixed f.
@@ -108,47 +127,48 @@ object PocketImperative {
   case class EncoderState(
       f: Int,
       var t: Int,                        // saturating at Layout.TSaturation
-      lastInput: Array[UByte],            // I_{t-1}
-      mask: Array[UByte],                 // M_{t-1}
-      build: Array[UByte],                // B_{t-1}
-      changeHistory: Array[UByte],        // D_{t-1} .. D_{t-7}: ring buffer of HistoryVectors slots, newest at historyHead
+      lastInput: BitArray,               // I_{t-1}
+      mask: BitArray,                    // M_{t-1}
+      build: BitArray,                   // B_{t-1}
+      changeHistory: BitArray,           // D_{t-1} .. D_{t-7}: ring buffer of HistoryVectors slots of Layout.bitsPerSlot(f) bits, newest at historyHead
       changeHistoryZero: Array[Boolean], // per slot: the stored vector is all zero (Z_t of green book 5.3.1.2)
       var historyHead: Int,
       var zeroRunBeyond: Int,            // consecutive all-zero D older than the stored ones, saturating at 8
       var newMaskHistory: Int,           // p_{t-1} .. p_{t-15} in the low 15 bits
-      xt: Array[UByte],                   // scratch: X_t
-      yt: Array[UByte]                    // scratch: y_t and bit extractions
+      xt: BitArray,                      // scratch: X_t
+      yt: BitArray                       // scratch: y_t and bit extractions
   ) {
-    require(encoderInvariant(f, t, lastInput, mask, build, changeHistory, changeHistoryZero, historyHead, zeroRunBeyond, newMaskHistory, xt, yt))
+    StaticChecks.require(encoderInvariant(f, t, lastInput, mask, build, changeHistory, changeHistoryZero, historyHead, zeroRunBeyond, newMaskHistory, xt, yt))
 
     @ghost
     @inlineOnce
     def lemmaInvariant(): Unit = {}.ensuring(_ => encoderInvariant(f, t, lastInput, mask, build, changeHistory, changeHistoryZero, historyHead, zeroRunBeyond, newMaskHistory, xt, yt))
   }
 
-  def decoderInvariant(f: Int, t: Int, lastInput: Array[UByte], mask: Array[UByte], unknownMasks: Int, unknownInputs: Int, xt: Array[UByte], sentMask: Array[UByte]): Boolean = {
+  @ghost
+  def decoderInvariant(f: Int, t: Int, lastInput: BitArray, mask: BitArray, unknownMasks: Int, unknownInputs: Int, xt: BitArray, sentMask: BitArray): Boolean = {
     1 <= f && f <= Layout.MaxF &&
     0 <= t && t <= Layout.TSaturation &&
-    lastInput.length == Layout.bytesPerVector(f) &&
-    mask.length == Layout.bytesPerVector(f) &&
+    lastInput.valid && lastInput.size == f &&
+    mask.valid && mask.size == f &&
     0 <= unknownMasks && unknownMasks <= Layout.LossSaturation &&
     0 <= unknownInputs && unknownInputs <= Layout.LossSaturation &&
-    xt.length == Layout.bytesPerVector(f) &&
-    sentMask.length == Layout.bytesPerVector(f)
+    xt.valid && xt.size == f &&
+    sentMask.valid && sentMask.size == f
   }
 
   /** Decoder state of one stream (green book 3.3.2). F is fixed at creation, see docs/questions.md. */
   case class DecoderState(
       f: Int,
       var t: Int,                        // saturating at Layout.TSaturation
-      lastInput: Array[UByte],            // I_{t-1}
-      mask: Array[UByte],                 // M_{t-1}
+      lastInput: BitArray,               // I_{t-1}
+      mask: BitArray,                    // M_{t-1}
       var unknownMasks: Int,             // L^M_t, saturating at Layout.LossSaturation
       var unknownInputs: Int,            // L^I_t, saturating at Layout.LossSaturation
-      xt: Array[UByte],                   // scratch: X_t
-      sentMask: Array[UByte]              // scratch: mask from q_t, kept apart until the checks pass (green book 3.3.3.2)
+      xt: BitArray,                      // scratch: X_t
+      sentMask: BitArray                 // scratch: mask from q_t, kept apart until the checks pass (green book 3.3.3.2)
   ) {
-    require(decoderInvariant(f, t, lastInput, mask, unknownMasks, unknownInputs, xt, sentMask))
+    StaticChecks.require(decoderInvariant(f, t, lastInput, mask, unknownMasks, unknownInputs, xt, sentMask))
 
     @ghost
     @inlineOnce
@@ -160,17 +180,18 @@ object PocketImperative {
       * restarts the stream.
       *
       * @param st encoder state, sized by the caller for its f; every non-scratch field is overwritten
-      * @param initialMask initial mask M_0, packed in `Layout.bytesPerVector(st.f)` bytes
+      * @param initialMask initial mask M_0, of `st.f` bits
       */
     @cCode.`export`
-    def encoderInit(st: EncoderState, initialMask: Array[UByte]): Unit = {
-      require(initialMask.length == Layout.bytesPerVector(st.f))
+    def encoderInit(st: EncoderState, initialMask: BitArray): Unit = {
+      StaticChecks.require(initialMask.valid)
+      require(initialMask.size == st.f)
       ghostExpr(st.lemmaInvariant())
       st.t = 0
-      clearBytes(st.lastInput)
-      copyBytes(initialMask, st.mask)
-      clearBytes(st.build)
-      clearBytes(st.changeHistory)
+      clearBits(st.lastInput)
+      copyBits(initialMask, st.mask)
+      clearBits(st.build)
+      clearBits(st.changeHistory)
       fillBooleans(st.changeHistoryZero, true)
       st.historyHead = 0
       st.zeroRunBeyond = 0
@@ -178,36 +199,33 @@ object PocketImperative {
     }.ensuring(_ => st.t == 0)
 
     /** One compression step (blue book sections 4 and 5.3): writes o_t into `out` and returns its length
-      * in bits, or [[Errors.ErrCapacity]] if `outCapacityBits` is too small, in which case the state is
-      * unchanged.
+      * in bits, or [[Errors.ErrCapacity]] if `out` is too small, in which case the state is unchanged.
       *
       * @param st encoder state at time step t, updated in place to the state at t+1
-      * @param input input vector I_t, packed in `Layout.bytesPerVector(st.f)` bytes
+      * @param input input vector I_t, of `st.f` bits
       * @param newMaskFlag p_t, new-mask flag (blue book 3.3.2)
       * @param sendMaskFlag f_t, send-mask flag (blue book 3.3.2); must be set while t <= R_t
       * @param uncompressedFlag r_t, uncompressed flag (blue book 3.3.2); must be set while t <= R_t
       * @param robustnessT R_t, robustness level of this step (blue book 3.3.2), free to change at every step
-      * @param out output buffer receiving o_t, MSB first from bit 0
-      * @param outCapacityBits number of bits of `out` the call may write
+      * @param out output buffer receiving o_t from bit 0; its size is the number of bits the call may write
       */
     @cCode.`export`
     def encodeStep(
         st: EncoderState,
-        input: Array[UByte],
+        input: BitArray,
         newMaskFlag: Boolean,
         sendMaskFlag: Boolean,
         uncompressedFlag: Boolean,
         robustnessT: Int,
-        out: Array[UByte],
-        outCapacityBits: Int
+        out: BitArray
     ): Int = {
-      require(input.length == Layout.bytesPerVector(st.f))
+      StaticChecks.require(input.valid && out.valid)
+      require(input.size == st.f)
       require(0 <= robustnessT && robustnessT <= Layout.MaxR)
       require(st.t > robustnessT || (sendMaskFlag && uncompressedFlag)) // blue book 3.3.2 c) and d); exact, as t saturates above MaxR
-      require(0 <= outCapacityBits && outCapacityBits <= Layout.maxOutputBits(Layout.MaxF))
-      require(((outCapacityBits + 7) >>> 3) <= out.length)
+      require(out.size <= Layout.maxOutputBits(Layout.MaxF))
       0
-    }.ensuring(res => res <= outCapacityBits)
+    }.ensuring(res => out.valid && res <= out.size)
   }
 
   object DecoderMut {
@@ -220,28 +238,27 @@ object PocketImperative {
     def decoderInit(st: DecoderState): Unit = {
       ghostExpr(st.lemmaInvariant())
       st.t = 0
-      clearBytes(st.lastInput)
-      clearBytes(st.mask)
+      clearBits(st.lastInput)
+      clearBits(st.mask)
       st.unknownMasks = 0
       st.unknownInputs = 0
     }.ensuring(_ => st.t == 0)
 
     /** One decompression step: consumes exactly one output vector from the front of `packet`, writes I_t
-      * into `out` and returns the number of bits consumed, at most `packetBits`. Returns
+      * into `out` and returns the number of bits consumed, at most the size of `packet`. Returns
       * [[Errors.ErrMalformed]] and leaves the state unchanged if the packet fails a validity check
       * (green book 3.3.6). The caller decides what the remaining bits mean: padding on the packet path,
       * the next vector on the file path.
       *
       * @param st decoder state at time step t, updated in place to the state at t+1
-      * @param packet received bits, MSB first from bit 0, starting with o_t
-      * @param packetBits number of valid bits in `packet`
-      * @param out output buffer receiving I_t, packed in `Layout.bytesPerVector(st.f)` bytes
+      * @param packet received bits, starting with o_t at bit 0
+      * @param out output buffer receiving I_t, of `st.f` bits
       */
     @cCode.`export`
-    def decodeStep(st: DecoderState, packet: Array[UByte], packetBits: Int, out: Array[UByte]): Int = {
-      require(0 <= packetBits && packetBits <= 2147483640 && ((packetBits + 7) >>> 3) <= packet.length)
-      require(out.length == Layout.bytesPerVector(st.f))
+    def decodeStep(st: DecoderState, packet: BitArray, out: BitArray): Int = {
+      StaticChecks.require(packet.valid && out.valid)
+      require(out.size == st.f)
       Errors.ErrMalformed
-    }.ensuring(res => res <= packetBits)
+    }.ensuring(res => packet.valid && res <= packet.size)
   }
 }

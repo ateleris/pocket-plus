@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build the POCKET+ shared library on macOS/Linux (the Unix equivalent of pocketplus.vcxproj):
-# regenerate pocketplus.c from PocketImperative.scala via Stainless GenC when needed, then compile
-# the generated codec + pp_shim into native/build/libpocketplus.{dylib,so}.
+# regenerate pocketplus.c from PocketImperative.scala and the data structures it is built on, via
+# Stainless GenC when needed, then compile the generated codec + pp_shim into
+# native/build/libpocketplus.{dylib,so}.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -10,13 +11,25 @@ repo="$(dirname "$here")"
 jar="$(echo "$repo"/tools/stainless/lib/stainless-dotty-standalone-*.jar)"
 [ -f "$jar" ] || { echo "Stainless jar not found; run ./install.sh first." >&2; exit 1; }
 
-scala_src="$repo/scala/src/main/scala/pocket/PocketImperative.scala"
+scala_dir="$repo/scala/src/main/scala/pocket"
+# What GenC compiles: the codec, and the bit array it stores its vectors in. Keep this list in sync
+# with build/Stainless.props.
+scala_srcs=(
+  "$scala_dir/PocketImperative.scala"
+  "$scala_dir/datastructure/arrays/BitArray.scala"
+  "$scala_dir/datastructure/Utils.scala"
+)
 genc_c="$here/generated/pocketplus.c"
 jvm_args="-Xss512m --sun-misc-unsafe-memory-access=allow"
 
-if [ ! -f "$genc_c" ] || [ "$scala_src" -nt "$genc_c" ]; then
+stale=0
+[ -f "$genc_c" ] || stale=1
+for src in "${scala_srcs[@]}"; do
+  if [ "$src" -nt "$genc_c" ]; then stale=1; fi
+done
+if [ "$stale" = 1 ]; then
   echo "[GenC] PocketImperative.scala -> pocketplus.c"
-  (cd "$repo" && java $jvm_args -jar "$jar" --config-file=false --genc --skip-verification --genc-output="$genc_c" "$scala_src")
+  (cd "$repo" && java $jvm_args -jar "$jar" --config-file=false --genc --skip-verification --genc-output="$genc_c" "${scala_srcs[@]}")
   [ -f "$genc_c" ] || { echo "GenC did not produce $genc_c" >&2; exit 1; }
 fi
 
