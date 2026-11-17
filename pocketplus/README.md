@@ -89,7 +89,8 @@ env/bin/python -m pytest -m verify         # Stainless verification gate (slow)
   `pp_decompress`, …) is hand-written in `native/src/pp_shim.c` around the entry points of
   `PocketImperative.scala`. It allocates the state buffers once per stream, checks every argument
   before calling the generated code, and takes vectors packed MSB first into bytes. The GenC output
-  in `native/generated/` is never hand-edited.
+  in `native/generated/` is never hand-edited. It is committed, so that each commit shows how the C
+  changes: build before committing a change to the Scala, and commit the regenerated files with it.
 - The C is built as **C99** (`-std=c99 -pedantic` / `/clang:-std=c99`) with warnings as errors:
   `-Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wpointer-arith -Wconversion
   -Werror`, plus `-Wmissing-variable-declarations` where the compiler has it (clang, and gcc from
