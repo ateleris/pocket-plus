@@ -153,6 +153,43 @@ object Encoder {
     if params.t > 0 then xor(mt, params.mtMinusOne) else build0(params.f)
   }.ensuring(res => res.size == params.f)
 
+
+  /**
+    * The user-specified parameters of a trace are valid for Encoder.step at every step: the trace starts at
+    * time step t, and the i-th step (time t + i) uses the i-th element of each list.
+    */
+  def paramsTraceValid(t: BigInt, ftTrace: List[Boolean], rtTrace: List[Boolean], robustnessTTrace: List[BigInt]): Boolean = {
+    require(ftTrace.size == rtTrace.size && ftTrace.size == robustnessTTrace.size)
+    decreases(ftTrace)
+    ftTrace match {
+      case Nil() => true
+      case Cons(ft, ftTail) =>
+        val rt = rtTrace.head
+        val robustnessT = robustnessTTrace.head
+        0 <= robustnessT && robustnessT <= MAX_R
+        && (t > robustnessT || (ft && rt)) // Encoder.step's precondition (bluebook 3.3.2 c) and d))
+        && paramsTraceValid(t + 1, ftTail, rtTrace.tail, robustnessTTrace.tail)
+    }
+  }
+
+  /**
+    * Encodes a trace of input vectors, one Encoder.step per vector, threading the compression state. The i-th
+    * step uses the i-th element of each parameter list. Returns the packets, in order, and the final state.
+    */
+  def encodeTrace(startParams: CompressionState, inputVectors: List[List[Boolean]], ptTrace: List[Boolean], ftTrace: List[Boolean], rtTrace: List[Boolean], robustnessTTrace: List[BigInt]): (List[List[Boolean]], CompressionState) = {
+    require(inputVectors.size == ptTrace.size && inputVectors.size == ftTrace.size && inputVectors.size == rtTrace.size && inputVectors.size == robustnessTTrace.size)
+    require(inputVectors.forall(it => it.size == startParams.f))
+    require(paramsTraceValid(startParams.t, ftTrace, rtTrace, robustnessTTrace))
+    decreases(inputVectors)
+    inputVectors match {
+      case Nil() => (List[List[Boolean]](), startParams)
+      case Cons(it, tail) =>
+        val (packet, nextParams) = step(startParams, it, ptTrace.head, ftTrace.head, rtTrace.head, robustnessTTrace.head)
+        val (restPackets, finalParams) = encodeTrace(nextParams, tail, ptTrace.tail, ftTrace.tail, rtTrace.tail, robustnessTTrace.tail)
+        (Cons(packet, restPackets), finalParams)
+    }
+  }.ensuring(res => res._1.size == inputVectors.size)
+
   /**
     * Advances one step: encodes `it` under `params` with the user-specified parameters of this step
     * (robustness level `robustnessT`, new-mask flag `pt`, send-mask flag `ft`, uncompressed flag `rt`,
@@ -312,6 +349,26 @@ object Decoder {
     case (Some(it), nextSt) => nextSt.t == st.t + 1 && nextSt.f == st.f && nextSt.itMinusOne == it && it.size == st.f
     case (None(), nextSt) => nextSt == st
   })
+
+  /**
+    * Counterpart of Encoder.encodeTrace: decodes the packets one after the other with Decoder.step, threading
+    * the decompression state. Returns one result per packet, in order: Some(I_t) if the packet decoded, None if
+    * it is not well formed. A malformed packet leaves the state unchanged (as in Decoder.step) and decoding goes
+    * on with the next packet, so the packets that decode successfully are still returned.
+    *
+    * @param startState decompression state before the first packet
+    * @param packets output vectors o_t, o_{t+1}, ..., each one a whole packet
+    */
+  def decodeTrace(startState: DecompressionState, packets: List[List[Boolean]]): (List[Option[List[Boolean]]], DecompressionState) = {
+    decreases(packets)
+    packets match {
+      case Nil() => (List[Option[List[Boolean]]](), startState)
+      case Cons(ot, tail) =>
+        val (decoded, nextState) = step(startState, ot)
+        val (restDecoded, finalState) = decodeTrace(nextState, tail)
+        (Cons(decoded, restDecoded), finalState)
+    }
+  }.ensuring(res => res._1.size == packets.size && res._2.f == startState.f)
 
   /**
     * Mirror of Encoder.outputVector: parses o_t = h_t || q_t || u_t (bluebook section 5.3.3) and
@@ -985,6 +1042,30 @@ object EncodeDecodeRoundTripProof {
     val (ot, nextCs) = Encoder.step(compressionParams, it, pt, ft, rt, robustnessT)
     val (decodedItOpt, decoderStateAfter) = Decoder.step(PocketExecSpec.decoderView(compressionParams), ot) 
     decoderStateAfter == PocketExecSpec.decoderView(nextCs)
+  })
+
+  @ghost @inlineOnce @opaque
+  def traceRoundTripEncodingWithNoLossTheorem(compressionParams: CompressionState, inputTrace: List[List[Boolean]], ptTrace: List[Boolean], ftTrace: List[Boolean], rtTrace: List[Boolean], robustnessTTrace: List[BigInt]): Unit = {
+    require(inputTrace.size == ptTrace.size && inputTrace.size == ftTrace.size && inputTrace.size == rtTrace.size && inputTrace.size == robustnessTTrace.size)
+    require(inputTrace.forall(it => it.size == compressionParams.f))
+    require(Encoder.paramsTraceValid(compressionParams.t, ftTrace, rtTrace, robustnessTTrace))
+    decreases(inputTrace)
+    inputTrace match {
+      case Nil() => ()
+      case Cons(it, t) =>
+        val pt = ptTrace.head
+        val ft = ftTrace.head
+        val rt = rtTrace.head
+        val robustnessT = robustnessTTrace.head
+        mainRoundTripTheorem(compressionParams, it, pt, ft, rt, robustnessT)
+        mainStateSynchronizationTheorem(compressionParams, it, pt, ft, rt, robustnessT)
+        val (ot, nextCs) = Encoder.step(compressionParams, it, pt, ft, rt, robustnessT)
+        traceRoundTripEncodingWithNoLossTheorem(nextCs, t, ptTrace.tail, ftTrace.tail, rtTrace.tail, robustnessTTrace.tail)
+    }
+  }.ensuring(_ => {
+    val (packets, finalCs) = Encoder.encodeTrace(compressionParams, inputTrace, ptTrace, ftTrace, rtTrace, robustnessTTrace)
+    val (decoded, finalDs) = Decoder.decodeTrace(PocketExecSpec.decoderView(compressionParams), packets)
+    decoded == inputTrace.map(it => Some(it)) && finalDs == PocketExecSpec.decoderView(finalCs)
   })
 }
 
