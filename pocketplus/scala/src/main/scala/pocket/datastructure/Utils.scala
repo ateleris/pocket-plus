@@ -170,6 +170,14 @@ object Utils {
     require(BigInt(Long.MinValue) <= a && a <= BigInt(Long.MaxValue))
   }.ensuring(_ => (a.toLong == b) == (a == BigInt(b)) && (a < BigInt(b)) == (a.toLong < b) && (a > BigInt(b)) == (a.toLong > b) && (a <= BigInt(b)) == (a.toLong <= b) && (a >= BigInt(b)) == (a.toLong >= b))
 
+  /** Halving a non-negative Int with a shift is halving it as a BigInt. */
+  @opaque @inlineOnce @ghost
+  def lemmaHalfIntToBigInt(a: Int): Unit = {
+    require(a >= 0)
+    assert((a >>> 1) == a / 2)
+    assert(BigInt(a / 2) == BigInt(a) / 2)
+  }.ensuring(_ => BigInt(a >>> 1) == BigInt(a) / 2)
+
   @opaque @inlineOnce @ghost
   def lemmaConversionBackForth(a: BigInt): Unit = {
     require(Int.MinValue <= a && a <= Int.MaxValue)
