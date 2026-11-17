@@ -72,35 +72,7 @@ in the spec (uses `stainless.conf`). Pass extra Stainless flags as `$1`, e.g.
 
 ### Overview: one encode/decode step and the main theorems
 
-```mermaid
-flowchart LR
-  S["encoder state Sₜ"]
-  I["input Iₜ"]
-  P["params pₜ, fₜ, rₜ, Rₜ"]
-
-  subgraph ENC["Encoder.step"]
-    E1["updateMaskAndBuild<br/>updateChangeVector"] --> E2["outputVector<br/>hₜ ‖ qₜ ‖ uₜ"]
-  end
-
-  subgraph DEC["Decoder.step"]
-    D1["decodeOutputVector"]
-  end
-
-  S --> E1
-  I --> E1
-  P --> E1
-  E2 -->|"oₜ"| D1
-  S -->|"decoderView"| D1
-  E2 --> NS["Sₜ₊₁"]
-  D1 --> OUT["Iₜ'"]
-  D1 --> DS["decoder state'"]
-
-  T1{{"<b>mainRoundTripTheorem</b><br/>∀ Sₜ, Iₜ, params:<br/>Iₜ' = Iₜ"}}
-  T2{{"<b>mainStateSynchronizationTheorem</b><br/>∀ Sₜ, Iₜ, params:<br/>decoder state' = decoderView(Sₜ₊₁)"}}
-  OUT -.-> T1
-  DS -.-> T2
-  NS -.-> T2
-```
+![One encode/decode step, its sub-functions and the two main theorems](docs/encode-decode-step.svg)
 
 The two theorems cover a single step, and the conclusion of the second is the hypothesis of
 both at the next step. Applying them step after step therefore covers a whole stream, provided
