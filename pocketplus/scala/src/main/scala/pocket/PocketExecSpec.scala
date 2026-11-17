@@ -1821,6 +1821,12 @@ object ListUtils {
     assert(ListSpecs.appendAssoc(l, List(x), tl))
   }.ensuring(_ => (l ++ List(x)) ++ tl == l ++ Cons(x, tl))
 
+  /** ListSpecs.appendAssoc as a lemma call. */
+  @ghost @inlineOnce @opaque
+  def lemmaAppendAssoc[A](a: List[A], b: List[A], c: List[A]): Unit = {
+    assert(ListSpecs.appendAssoc(a, b, c))
+  }.ensuring(_ => (a ++ b) ++ c == a ++ (b ++ c))
+
   /** Writing element i and taking the first i + 1 elements is taking the first i and appending the value. */
   @ghost @inlineOnce @opaque
   def lemmaUpdatedTakeSnoc[A](l: List[A], i: BigInt, v: A): Unit = {
