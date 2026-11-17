@@ -41,7 +41,7 @@ case class BitArray(private val data: Array[UByte], private var isize: Int) {
     ghostExpr(Utils.lemmaToIntBigIntConversionBothDirections(_size, 0))
     isize
   }.ensuring(res =>
-    valid && res == toList.size.toInt && res >= 0
+    valid && res == toList.size.toInt && res >= 0 && BigInt(res) == toList.size
   )
 
   def apply(i: Int): Boolean = {
