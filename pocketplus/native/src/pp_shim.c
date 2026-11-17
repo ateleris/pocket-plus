@@ -27,13 +27,6 @@ static BitArray alloc_bits(int32_t bits) {
     return a;
 }
 
-static array_bool alloc_bools(int32_t len) {
-    array_bool a;
-    a.data = (bool*)calloc((size_t)len, sizeof(bool));
-    a.length = len;
-    return a;
-}
-
 /* View of the first `bits` bits of a caller buffer of (bits + 7) / 8 bytes. Input views are never
    written by the generated code. */
 static BitArray view(const uint8_t* p, int32_t bits) {
@@ -63,7 +56,6 @@ PP_API void pp_compressor_free(PPCompressor* c) {
     free(s->mask.data.data);
     free(s->build.data.data);
     free(s->changeHistory.data.data);
-    free(s->changeHistoryZero.data);
     free(s->xt.data.data);
     free(s->yt.data.data);
     free(c);
@@ -81,14 +73,13 @@ PP_API PPCompressor* pp_compressor_create(int32_t f, const uint8_t* initial_mask
     s->build             = alloc_bits(f);
     /* HISTORY_VECTORS slots of Layout.bitsPerSlot(f) = 8 * nb bits, so each starts on a byte. */
     s->changeHistory     = alloc_bits(HISTORY_VECTORS * 8 * nb);
-    s->changeHistoryZero = alloc_bools(HISTORY_VECTORS);
     s->xt                = alloc_bits(f);
     s->yt                = alloc_bits(f);
     /* encoderInit copies M_0 into the state, so the all-zero default only lives for the call. */
     BitArray m0 = initial_mask ? view(initial_mask, f) : alloc_bits(f);
     if (!s->lastInput.data.data || !s->mask.data.data || !s->build.data.data ||
-        !s->changeHistory.data.data || !s->changeHistoryZero.data || !s->xt.data.data ||
-        !s->yt.data.data || !m0.data.data) {
+        !s->changeHistory.data.data || !s->xt.data.data || !s->yt.data.data ||
+        !m0.data.data) {
         if (!initial_mask) free(m0.data.data);
         pp_compressor_free(c);
         return NULL;
