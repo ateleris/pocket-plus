@@ -2,6 +2,7 @@ package pocket
 
 import stainless.lang.{ghost => ghostExpr, *}
 import stainless.annotation.*
+import stainless.math.Unsigned.*
 import stainless.lang.StaticChecks
 import stainless.lang.StaticChecks.{Ensuring, WhileDecorations}
 import datastructure.arrays.BitArray
@@ -38,6 +39,8 @@ object PocketImperative {
     val MaxR: Int = 7
     /** Full change vectors kept for X_t: D_{t-1} .. D_{t-7} (green book table 5-1). */
     val HistoryVectors: Int = 7
+    /** The zero flags of the HistoryVectors slots, all set. */
+    val AllSlotsZero: UByte = 127.toUByte
     /** The definitions only read min(t, 16), so t saturates there. */
     val TSaturation: Int = 16
     /** The decoder's loss counters saturate at 16 (green book 3.3.4.2). */
@@ -83,29 +86,17 @@ object PocketImperative {
     }).invariant(0 <= i && i <= n && src.valid && src.size == n && dst.valid && dst.size == n)
   }.ensuring(_ => dst.valid && dst.size == old(dst).size)
 
-  /** Sets every element of `a` to `v`. */
-  def fillBooleans(a: Array[Boolean], v: Boolean): Unit = {
-    val n = a.length
-    var i = 0
-    (while (i < n) {
-      decreases(n - i)
-      a(i) = v
-      i += 1
-    }).invariant(0 <= i && i <= n && a.length == n)
-  }.ensuring(_ => a.length == old(a).length)
-
   @ghost
-  def encoderInvariant(f: Int, t: Int, lastInput: BitArray, mask: BitArray, build: BitArray, changeHistory: BitArray, changeHistoryZero: Array[Boolean], historyHead: Int, zeroRunBeyond: Int, newMaskHistory: Int, xt: BitArray, yt: BitArray): Boolean = {
+  def encoderInvariant(f: Int, t: Int, lastInput: BitArray, mask: BitArray, build: BitArray, changeHistory: BitArray, changeHistoryZero: UByte, historyHead: Int, zeroRunBeyond: Int, newMaskHistory: UShort, xt: BitArray, yt: BitArray): Boolean = {
     1 <= f && f <= Layout.MaxF &&
     0 <= t && t <= Layout.TSaturation &&
     lastInput.valid && lastInput.size == f &&
     mask.valid && mask.size == f &&
     build.valid && build.size == f &&
     changeHistory.valid && changeHistory.size == Layout.HistoryVectors * Layout.bitsPerSlot(f) &&
-    changeHistoryZero.length == Layout.HistoryVectors &&
+    changeHistoryZero <= Layout.AllSlotsZero &&
     0 <= historyHead && historyHead < Layout.HistoryVectors &&
     0 <= zeroRunBeyond && zeroRunBeyond <= 8 &&
-    0 <= newMaskHistory && newMaskHistory < 32768 &&
     xt.valid && xt.size == f &&
     yt.valid && yt.size == f
   }
@@ -119,10 +110,10 @@ object PocketImperative {
       mask: BitArray,                    // M_{t-1}
       build: BitArray,                   // B_{t-1}
       changeHistory: BitArray,           // D_{t-1} .. D_{t-7}: ring buffer of HistoryVectors slots of Layout.bitsPerSlot(f) bits, newest at historyHead
-      changeHistoryZero: Array[Boolean], // per slot: the stored vector is all zero (Z_t of green book 5.3.1.2)
+      var changeHistoryZero: UByte,      // bit k is set when the vector stored in slot k is all zero (Z_t of green book 5.3.1.2); bit 7 stays clear
       var historyHead: Int,
       var zeroRunBeyond: Int,            // consecutive all-zero D older than the stored ones, saturating at 8
-      var newMaskHistory: Int,           // p_{t-1} .. p_{t-15} in the low 15 bits
+      var newMaskHistory: UShort,        // p_{t-1} .. p_{t-16}, newest in bit 0; the definitions read at most the 15 newest
       xt: BitArray,                      // scratch: X_t
       yt: BitArray                       // scratch: y_t and bit extractions
   ) {
@@ -180,10 +171,10 @@ object PocketImperative {
       copyBits(initialMask, st.mask)
       st.build.clear()
       st.changeHistory.clear()
-      fillBooleans(st.changeHistoryZero, true)
+      st.changeHistoryZero = Layout.AllSlotsZero
       st.historyHead = 0
       st.zeroRunBeyond = 0
-      st.newMaskHistory = 0
+      st.newMaskHistory = 0.toUShort
     }.ensuring(_ => st.t == 0)
 
     /** One compression step (blue book sections 4 and 5.3): writes o_t into `out` and returns its length
