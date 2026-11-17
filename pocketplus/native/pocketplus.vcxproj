@@ -90,6 +90,7 @@
     <None Include="..\scala\src\main\scala\pocket\PocketImperative.scala" />
     <None Include="..\scala\src\main\scala\pocket\datastructure\arrays\BitArray.scala" />
     <None Include="..\scala\src\main\scala\pocket\datastructure\Utils.scala" />
+    <None Include="..\scala\src\main\scala\pocket\PocketExecSpec.scala" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

@@ -1898,6 +1898,24 @@ object Utils {
 }
 
 object ListUtils {
+  /** Appending an element and then a list is appending the list with that element in front. */
+  @ghost @inlineOnce @opaque
+  def lemmaAppendCons[A](l: List[A], x: A, tl: List[A]): Unit = {
+    ListSpecs.appendAssoc(l, List(x), tl)
+    ()
+  }.ensuring(_ => (l ++ List(x)) ++ tl == l ++ Cons(x, tl))
+
+  /** Writing element i and taking the first i + 1 elements is taking the first i and appending the value. */
+  @ghost @inlineOnce @opaque
+  def lemmaUpdatedTakeSnoc[A](l: List[A], i: BigInt, v: A): Unit = {
+    require(0 <= i && i < l.size)
+    decreases(l)
+    l match {
+      case Cons(h, tl) if i > 0 => lemmaUpdatedTakeSnoc(tl, i - 1, v)
+      case _ => ()
+    }
+  }.ensuring(_ => l.updated(i, v).take(i + 1) == l.take(i) ++ List(v))
+
   /** The packet as the encoder concatenates it (left-associated) is the packet as the decoder peels it off (right-associated). */
   @ghost @inlineOnce @opaque
   def lemmaPacketAssoc[A](a: List[A], b: List[A], c: List[A], d: List[A], e: List[A], f: List[A], g: List[A], h: List[A]): Unit = {

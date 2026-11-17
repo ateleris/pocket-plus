@@ -11,6 +11,9 @@
          list in sync with scala_srcs in native/build.sh. -->
     <BitArraySource>$(RepoRoot)scala\src\main\scala\pocket\datastructure\arrays\BitArray.scala</BitArraySource>
     <UtilsSource>$(RepoRoot)scala\src\main\scala\pocket\datastructure\Utils.scala</UtilsSource>
+    <!-- The functional specification: PocketImperative.scala refers to it in its contracts and ghost
+         code, so GenC has to read it, but none of it ends up in the C. -->
+    <SpecSource>$(RepoRoot)scala\src\main\scala\pocket\PocketExecSpec.scala</SpecSource>
     <GenCDir>$(RepoRoot)native\generated\</GenCDir>
     <GenCSource>$(GenCDir)pocketplus.c</GenCSource>
     <GenCHeader>$(GenCDir)pocketplus.h</GenCHeader>

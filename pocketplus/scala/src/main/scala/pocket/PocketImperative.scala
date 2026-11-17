@@ -2,6 +2,7 @@ package pocket
 
 import stainless.lang.{ghost => ghostExpr, *}
 import stainless.annotation.*
+import stainless.collection.*
 import stainless.math.Unsigned.*
 import stainless.lang.StaticChecks
 import stainless.lang.StaticChecks.{Ensuring, WhileDecorations}
@@ -85,6 +86,162 @@ object PocketImperative {
       i += 1
     }).invariant(0 <= i && i <= n && src.valid && src.size == n && dst.valid && dst.size == n)
   }.ensuring(_ => dst.valid && dst.size == old(dst).size)
+
+  /** The basic encoding functions (blue book 5.2), written into a bit array. Each function writes from a position of
+    * the output and is specified by the bits it appends to those before that position, so that the calls compose
+    * by concatenation, like the lists of the functional specification. */
+  object BasicEncodingMut {
+    import BasicEncodingFunctions.*
+
+    /** The first n bits of a, as a list. It is opaque: the functions below are specified by equations between
+      * prefixes, and only `writeBit` needs to know what a prefix is made of. */
+    @ghost @pure @opaque
+    def prefix(a: BitArray, n: Int): List[Boolean] = {
+      require(a.valid && 0 <= n && n <= a.size)
+      datastructure.Utils.compareIntPreservedByToBigInt(n, a.size)
+      datastructure.Utils.compareIntPreservedByToBigInt(n, 0)
+      a.toList.take(BigInt(n))
+    }.ensuring(res => res.size == BigInt(n))
+
+    /** Writes bit b at position pos. */
+    def writeBit(out: BitArray, pos: Int, b: Boolean): Unit = {
+      StaticChecks.require(out.valid)
+      require(0 <= pos && pos < out.size)
+      ghostExpr({
+        val n = out.size
+        assert(BigInt(n) == out.toList.size)
+        datastructure.Utils.compareIntPreservedByToBigInt(pos, n)
+        assert(BigInt(pos) < BigInt(n))
+        datastructure.Utils.compareIntPreservedByToBigInt(pos, 0)
+        assert(BigInt(0) <= BigInt(pos))
+        assert(BigInt(pos) < out.toList.size)
+        datastructure.Utils.additionIntPreservedByToBigInt(pos, 1)
+        ListUtils.lemmaUpdatedTakeSnoc(out.toList, BigInt(pos), b)
+        unfold(prefix(out, pos))
+      })
+      out(pos) = b
+      ghostExpr(unfold(prefix(out, pos + 1)))
+    }.ensuring(_ => out.valid && out.size == old(out).size && prefix(out, pos + 1) == prefix(old(out), pos) ++ List(b))
+
+    /** 1 << k is 2^k as the specification defines it. */
+    @ghost @opaque @inlineOnce
+    def lemmaShiftIsPow2(k: Int): Unit = {
+      require(0 <= k && k <= 29)
+      if (k == 0) assert(BigInt(1 << 0) == pow2Fast(BigInt(0)))
+      else if (k == 1) assert(BigInt(1 << 1) == pow2Fast(BigInt(1)))
+      else if (k == 2) assert(BigInt(1 << 2) == pow2Fast(BigInt(2)))
+      else if (k == 3) assert(BigInt(1 << 3) == pow2Fast(BigInt(3)))
+      else if (k == 4) assert(BigInt(1 << 4) == pow2Fast(BigInt(4)))
+      else if (k == 5) assert(BigInt(1 << 5) == pow2Fast(BigInt(5)))
+      else if (k == 6) assert(BigInt(1 << 6) == pow2Fast(BigInt(6)))
+      else if (k == 7) assert(BigInt(1 << 7) == pow2Fast(BigInt(7)))
+      else if (k == 8) assert(BigInt(1 << 8) == pow2Fast(BigInt(8)))
+      else if (k == 9) assert(BigInt(1 << 9) == pow2Fast(BigInt(9)))
+      else if (k == 10) assert(BigInt(1 << 10) == pow2Fast(BigInt(10)))
+      else if (k == 11) assert(BigInt(1 << 11) == pow2Fast(BigInt(11)))
+      else if (k == 12) assert(BigInt(1 << 12) == pow2Fast(BigInt(12)))
+      else if (k == 13) assert(BigInt(1 << 13) == pow2Fast(BigInt(13)))
+      else if (k == 14) assert(BigInt(1 << 14) == pow2Fast(BigInt(14)))
+      else if (k == 15) assert(BigInt(1 << 15) == pow2Fast(BigInt(15)))
+      else if (k == 16) assert(BigInt(1 << 16) == pow2Fast(BigInt(16)))
+      else if (k == 17) assert(BigInt(1 << 17) == pow2Fast(BigInt(17)))
+      else if (k == 18) assert(BigInt(1 << 18) == pow2Fast(BigInt(18)))
+      else if (k == 19) assert(BigInt(1 << 19) == pow2Fast(BigInt(19)))
+      else if (k == 20) assert(BigInt(1 << 20) == pow2Fast(BigInt(20)))
+      else if (k == 21) assert(BigInt(1 << 21) == pow2Fast(BigInt(21)))
+      else if (k == 22) assert(BigInt(1 << 22) == pow2Fast(BigInt(22)))
+      else if (k == 23) assert(BigInt(1 << 23) == pow2Fast(BigInt(23)))
+      else if (k == 24) assert(BigInt(1 << 24) == pow2Fast(BigInt(24)))
+      else if (k == 25) assert(BigInt(1 << 25) == pow2Fast(BigInt(25)))
+      else if (k == 26) assert(BigInt(1 << 26) == pow2Fast(BigInt(26)))
+      else if (k == 27) assert(BigInt(1 << 27) == pow2Fast(BigInt(27)))
+      else if (k == 28) assert(BigInt(1 << 28) == pow2Fast(BigInt(28)))
+      else if (k == 29) assert(BigInt(1 << 29) == pow2Fast(BigInt(29)))
+    }.ensuring(_ => BigInt(1 << k) == pow2(BigInt(k)))
+
+    /** One step of encodeNBits on machine integers, for k >= 2: the first bit is rem >= half, where half is
+      * 2^(k-1), and the others encode what remains on k - 1 bits, with the weight halved. */
+    @ghost @opaque @inlineOnce
+    def lemmaEncodeNBitsStep(rem: Int, k: Int, half: Int): Unit = {
+      require(2 <= k && k <= 30 && 0 <= rem && 0 <= half)
+      require(BigInt(half) == pow2(BigInt(k) - 1) && BigInt(rem) < pow2(BigInt(k)))
+      val bit = rem >= half
+      val rest = if (bit) rem - half else rem
+      datastructure.Utils.compareIntPreservedByToBigInt(rem, half)
+      datastructure.Utils.compareIntPreservedByToBigInt(rest, 0)
+      datastructure.Utils.subtractionIntPreservedByToBigInt(k, 1)
+      if (bit) {
+        datastructure.Utils.subtractionIntPreservedByToBigInt(rem, half)
+      }
+      datastructure.Utils.lemmaHalfIntToBigInt(half)
+      val bigK = BigInt(k)
+      val bigRem = BigInt(rem)
+      val weight = pow2(bigK) / 2
+      assert(pow2(bigK) == 2 * pow2(bigK - 1))
+      assert(pow2(bigK - 1) == 2 * pow2(bigK - 2))
+      assert(weight == pow2(bigK - 1) && weight == BigInt(half))
+      assert(bigK - 1 == BigInt(k - 1))
+      assert(BigInt(half >>> 1) == pow2(BigInt(k - 1) - 1))
+      assert((bigRem < weight) == !bit)
+      assert(BigInt(rest) == (if (bit) bigRem - weight else bigRem))
+      assert(BigInt(rest) < pow2(BigInt(k - 1)))
+      assert(encodeNBits(bigRem, bigK, pow2(bigK)) == (if (bigRem < weight) Cons(ZERO, encodeNBits(bigRem, bigK - 1, weight)) else Cons(ONE, encodeNBits(bigRem - weight, bigK - 1, weight))))
+    }.ensuring(_ => {
+      val bit = rem >= half
+      val rest = if (bit) rem - half else rem
+      0 <= rest && BigInt(half >>> 1) == pow2(BigInt(k - 1) - 1) && BigInt(rest) < pow2(BigInt(k - 1)) &&
+      encodeNBits(BigInt(rem), BigInt(k), pow2(BigInt(k))) == Cons(bit, encodeNBits(BigInt(rest), BigInt(k - 1), pow2(BigInt(k - 1))))
+    })
+
+    /** The last step of encodeNBits on machine integers: the single bit left is rem >= half, where half is 1. */
+    @ghost @opaque @inlineOnce
+    def lemmaEncodeNBitsLast(rem: Int, k: Int, half: Int): Unit = {
+      require(k == 1 && 0 <= rem && 0 <= half)
+      require(BigInt(half) == pow2(BigInt(k) - 1) && BigInt(rem) < pow2(BigInt(k)))
+      assert(pow2(BigInt(k) - 1) == BigInt(1))
+      assert(pow2(BigInt(k)) == BigInt(2))
+      datastructure.Utils.compareIntPreservedByToBigInt(half, 1)
+      datastructure.Utils.compareIntPreservedByToBigInt(rem, 1)
+      datastructure.Utils.compareIntPreservedByToBigInt(rem, half)
+    }.ensuring(_ => encodeNBits(BigInt(rem), BigInt(k), pow2(BigInt(k))) == List(rem >= half))
+
+    /** Writes the k low bits of rem from position pos, most significant first, where half is 2^(k-1). This is
+      * encodeNBits of the specification: compare with the weight of the bit, subtract it, halve it. */
+    def writeBitsFrom(out: BitArray, pos: Int, rem: Int, k: Int, half: Int): Unit = {
+      StaticChecks.require(out.valid)
+      require(1 <= k && k <= 30 && 0 <= pos && pos <= out.size - k && 0 <= rem && 0 <= half)
+      StaticChecks.require(BigInt(half) == pow2(BigInt(k) - 1) && BigInt(rem) < pow2(BigInt(k)))
+      decreases(k)
+      @ghost val before = prefix(out, pos)
+      val bit = rem >= half
+      if (k > 1) {
+        val rest = if (bit) rem - half else rem
+        ghostExpr({
+          lemmaEncodeNBitsStep(rem, k, half)
+          ListUtils.lemmaAppendCons(before, bit, encodeNBits(BigInt(rest), BigInt(k - 1), pow2(BigInt(k - 1))))
+        })
+        writeBit(out, pos, bit)
+        writeBitsFrom(out, pos + 1, rest, k - 1, half >>> 1)
+      } else {
+        ghostExpr(lemmaEncodeNBitsLast(rem, k, half))
+        writeBit(out, pos, bit)
+      }
+    }.ensuring(_ => out.valid && out.size == old(out).size &&
+      prefix(out, pos + k) == prefix(old(out), pos) ++ encodeNBits(BigInt(rem), BigInt(k), pow2(BigInt(k))))
+
+    /** Writes the n low bits of value from position pos, most significant first. */
+    def writeBits(out: BitArray, pos: Int, value: Int, n: Int): Unit = {
+      StaticChecks.require(out.valid)
+      require(1 <= n && n <= 30 && 0 <= pos && pos <= out.size - n && 0 <= value)
+      StaticChecks.require(BigInt(value) < pow2(BigInt(n)))
+      ghostExpr({
+        lemmaShiftIsPow2(n - 1)
+        datastructure.Utils.subtractionIntPreservedByToBigInt(n, 1)
+      })
+      writeBitsFrom(out, pos, value, n, 1 << (n - 1))
+    }.ensuring(_ => out.valid && out.size == old(out).size &&
+      prefix(out, pos + n) == prefix(old(out), pos) ++ encodeNBits(BigInt(value), BigInt(n), pow2(BigInt(n))))
+  }
 
   @ghost
   def encoderInvariant(f: Int, t: Int, lastInput: BitArray, mask: BitArray, build: BitArray, changeHistory: BitArray, changeHistoryZero: UByte, historyHead: Int, zeroRunBeyond: Int, newMaskHistory: UShort, xt: BitArray, yt: BitArray): Boolean = {
