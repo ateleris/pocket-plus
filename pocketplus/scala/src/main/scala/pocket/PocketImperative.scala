@@ -507,7 +507,11 @@ object PocketImperative {
     /** Writes from position pos the run-length encoding (blue book 5.2.3) of x read from its last bit to its first,
       * which is the order in which the encoder applies it to X_t and to the mask changes (5.3.2). Returns the
       * position after it, or Errors.ErrCapacity if it does not fit in out, which may then have been written anywhere
-      * from pos on. */
+      * from pos on.
+      *
+      * Exported for now only so that the generated C of the basic encoding functions shows in the diffs: nothing
+      * calls it from C, and the export goes away once encodeStep uses it. */
+    @cCode.`export`
     def writeRunLengthReversed(x: BitArray, out: BitArray, pos: Int): Int = {
       StaticChecks.require(x.valid && out.valid)
       require(x.size <= Layout.MaxF && 0 <= pos && pos <= out.size)
