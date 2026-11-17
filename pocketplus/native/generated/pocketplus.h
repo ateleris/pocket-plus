@@ -77,5 +77,6 @@ void decoderInit(DecoderState* st);
 STAINLESS_FUNC_PURE int32_t encodeStep(EncoderState* st, BitArray* input, bool newMaskFlag, bool sendMaskFlag, bool uncompressedFlag, int32_t robustnessT, BitArray* out);
 void encoderInit(EncoderState* st, BitArray* initialMask);
 STAINLESS_FUNC_PURE int32_t maxOutputBits(int32_t f);
+int32_t writeRunLengthReversed(BitArray* x, BitArray* out, int32_t pos);
 
 #endif
