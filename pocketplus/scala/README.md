@@ -70,20 +70,5 @@ in the spec (uses `stainless.conf`). Pass extra Stainless flags as `$1`, e.g.
 - invertibility of sub-functions:
   - `lemmarunLengthEncodeRoundTrip`: PocketExecSpec.scala:1420
 
-### Overview: one encode/decode step and the main theorems
-
-![One encode/decode step, its sub-functions and the two main theorems](docs/encode-decode-step.svg)
-
-The two theorems cover a single step, and the conclusion of the second is the hypothesis of
-both at the next step. Applying them step after step therefore covers a whole stream, provided
-the decoder starts from `decoderView(S₀)`.
-
-Each encoding sub-function has an inverse and a round-trip lemma, and the decoder relies on them:
-
-| Encoder side (`BasicEncodingFunctions` / `Utils`) | Decoder side | Round-trip lemma |
-|---|---|---|
-| `runLengthEncode` (RLE) | `runLengthEncodingSize` + `runLengthDecode` | `lemmarunLengthEncodeRoundTrip`, `lemmaRunLengthEncodingSizeCorrectWithSuffix` |
-| `encodeNBits(·, 4, ·)` (BIT₄) | `decodeNBits` | `lemmaEncodeNBitsDecodeNBitsRoundTrip` |
-| `countEncode` (COUNT) | `countDecodePrefix` | `lemmaCountEncodeDecodeRoundTripWithSuffix` |
-| `bitExtractionFunction` (BE) | `bitInsertionFunction` (BI) | `lemmaBitInsertionExtraction` |
-| `xor(m, leftShift(m))` | `maskFromDiff` | `lemmaMaskFromDiff` |
+An overview figure of one encode/decode step and of the main theorems is in
+[`docs/verification_overview.md`](../../docs/verification_overview.md).
