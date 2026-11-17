@@ -241,6 +241,138 @@ object PocketImperative {
       writeBitsFrom(out, pos, value, n, 1 << (n - 1))
     }.ensuring(_ => out.valid && out.size == old(out).size &&
       prefix(out, pos + n) == prefix(old(out), pos) ++ encodeNBits(BigInt(value), BigInt(n), pow2(BigInt(n))))
+
+    /** floor(log2(n)) for 32 <= n <= MaxF, by comparisons as in the specification: no division and no loop. */
+    def log2Floor(n: Int): Int = {
+      require(32 <= n && n <= Layout.MaxF)
+      ghostExpr({
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 32)
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 63)
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 127)
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 255)
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 511)
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 1023)
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 2047)
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 4095)
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 8191)
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 16383)
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 32767)
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 65535)
+      })
+      if (n <= 63) 5
+      else if (n <= 127) 6
+      else if (n <= 255) 7
+      else if (n <= 511) 8
+      else if (n <= 1023) 9
+      else if (n <= 2047) 10
+      else if (n <= 4095) 11
+      else if (n <= 8191) 12
+      else if (n <= 16383) 13
+      else if (n <= 32767) 14
+      else 15
+    }.ensuring(res => 5 <= res && res <= 15 && BigInt(res) == floorLog2(BigInt(n)))
+
+    /** The number of bits E on which COUNT writes a - 2 when a >= 34 (blue book 5.2.2, countE in the specification). */
+    def countWidth(a: Int): Int = {
+      require(34 <= a && a <= Layout.MaxF)
+      2 * (log2Floor(a - 2) + 1) - 6
+    }.ensuring(res => 6 <= res && res <= 26)
+
+    /** COUNT(1) is the single bit 0. */
+    @ghost @opaque @inlineOnce
+    def lemmaCountEncodeOne(a: Int): Unit = {
+      require(a == 1)
+      datastructure.Utils.compareIntPreservedByToBigInt(a, 1)
+    }.ensuring(_ => countEncode(BigInt(a)) == List(ZERO))
+
+    /** The prefixes 110 and 111 of COUNT are 6 and 7 on 3 bits. */
+    @ghost @opaque @inlineOnce
+    def lemmaCountPrefix(): Unit = {
+      assert(pow2(BigInt(3)) == BigInt(8) && pow2(BigInt(2)) == BigInt(4) && pow2(BigInt(1)) == BigInt(2))
+      assert(encodeNBits(BigInt(0), BigInt(1), BigInt(2)) == List(ZERO))
+      assert(encodeNBits(BigInt(1), BigInt(1), BigInt(2)) == List(ONE))
+      assert(encodeNBits(BigInt(2), BigInt(2), BigInt(4)) == List(ONE, ZERO))
+      assert(encodeNBits(BigInt(3), BigInt(2), BigInt(4)) == List(ONE, ONE))
+    }.ensuring(_ => BigInt(6) < pow2(BigInt(3)) && BigInt(7) < pow2(BigInt(3)) &&
+      encodeNBits(BigInt(6), BigInt(3), pow2(BigInt(3))) == List(ONE, ONE, ZERO) &&
+      encodeNBits(BigInt(7), BigInt(3), pow2(BigInt(3))) == List(ONE, ONE, ONE))
+
+    /** COUNT(a) for 2 <= a <= 33 is 110 followed by a - 2 on 5 bits. */
+    @ghost @opaque @inlineOnce
+    def lemmaCountEncodeSmall(a: Int): Unit = {
+      require(2 <= a && a <= 33)
+      datastructure.Utils.compareIntPreservedByToBigInt(a, 1)
+      datastructure.Utils.compareIntPreservedByToBigInt(a, 2)
+      datastructure.Utils.compareIntPreservedByToBigInt(a, 33)
+      datastructure.Utils.subtractionIntPreservedByToBigInt(a, 2)
+      assert(BigInt(a - 2) == BigInt(a) - 2)
+      assert(pow2Fast(BigInt(5)) == pow2(BigInt(5)) && pow2(BigInt(5)) == BigInt(32))
+      lemmaCountPrefix()
+    }.ensuring(_ => BigInt(6) < pow2(BigInt(3)) && BigInt(a - 2) < pow2(BigInt(5)) &&
+      countEncode(BigInt(a)) == encodeNBits(BigInt(6), BigInt(3), pow2(BigInt(3))) ++ encodeNBits(BigInt(a - 2), BigInt(5), pow2(BigInt(5))))
+
+    /** COUNT(a) for a >= 34 is 111 followed by a - 2 on countWidth(a) bits. */
+    @ghost @opaque @inlineOnce
+    def lemmaCountEncodeLarge(a: Int): Unit = {
+      require(34 <= a && a <= Layout.MaxF)
+      val v = a - 2
+      val l = log2Floor(v)
+      val e = countWidth(a)
+      datastructure.Utils.compareIntPreservedByToBigInt(a, 33)
+      datastructure.Utils.compareIntPreservedByToBigInt(a, 65535)
+      datastructure.Utils.subtractionIntPreservedByToBigInt(a, 2)
+      assert(BigInt(v) == BigInt(a) - 2)
+      datastructure.Utils.additionIntPreservedByToBigInt(l, l)
+      datastructure.Utils.subtractionIntPreservedByToBigInt(l + l, 4)
+      assert(e == l + l - 4)
+      assert(BigInt(e) == 2 * BigInt(l) - 4)
+      assert(BigInt(e) == countE(BigInt(v)))
+      assert(pow2Fast(BigInt(e)) == pow2(BigInt(e)))
+      assert(BigInt(v) < pow2Fast(countE(BigInt(v))))
+      lemmaCountPrefix()
+    }.ensuring(_ => BigInt(7) < pow2(BigInt(3)) && BigInt(a - 2) < pow2(BigInt(countWidth(a))) &&
+      countEncode(BigInt(a)) == encodeNBits(BigInt(7), BigInt(3), pow2(BigInt(3))) ++ encodeNBits(BigInt(a - 2), BigInt(countWidth(a)), pow2(BigInt(countWidth(a)))))
+
+    /** Writes COUNT(a) (blue book 5.2.2) from position pos. Returns the position after it, or Errors.ErrCapacity if
+      * it does not fit in out, which may then have been written anywhere from pos on. */
+    def writeCount(out: BitArray, pos: Int, a: Int): Int = {
+      StaticChecks.require(out.valid)
+      require(1 <= a && a <= Layout.MaxF && 0 <= pos && pos <= out.size)
+      val room = out.size - pos
+      @ghost val before = prefix(out, pos)
+      if (a == 1) {
+        if (room < 1) Errors.ErrCapacity
+        else {
+          ghostExpr(lemmaCountEncodeOne(a))
+          writeBit(out, pos, false)
+          pos + 1
+        }
+      } else if (a <= 33) {
+        if (room < 8) Errors.ErrCapacity
+        else {
+          ghostExpr({
+            lemmaCountEncodeSmall(a)
+            ListSpecs.appendAssoc(before, encodeNBits(BigInt(6), BigInt(3), pow2(BigInt(3))), encodeNBits(BigInt(a - 2), BigInt(5), pow2(BigInt(5))))
+          })
+          writeBits(out, pos, 6, 3)
+          writeBits(out, pos + 3, a - 2, 5)
+          pos + 8
+        }
+      } else {
+        val e = countWidth(a)
+        if (room < 3 + e) Errors.ErrCapacity
+        else {
+          ghostExpr({
+            lemmaCountEncodeLarge(a)
+            ListSpecs.appendAssoc(before, encodeNBits(BigInt(7), BigInt(3), pow2(BigInt(3))), encodeNBits(BigInt(a - 2), BigInt(e), pow2(BigInt(e))))
+          })
+          writeBits(out, pos, 7, 3)
+          writeBits(out, pos + 3, a - 2, e)
+          pos + 3 + e
+        }
+      }
+    }.ensuring(res => out.valid && out.size == old(out).size && (res == Errors.ErrCapacity || (
+      pos < res && res <= out.size && prefix(out, res) == prefix(old(out), pos) ++ countEncode(BigInt(a)))))
   }
 
   @ghost
