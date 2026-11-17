@@ -33,12 +33,41 @@ case class BitArray(private val data: Array[UByte], private var _isize: Int, @gh
 
   @ghost @pure def getList: List[Boolean] = toList
 
+  /** What `valid` demands of the executable fields: a size in bits that fits in the bytes. Unlike `valid`, it can be
+    * checked at run time, and it is all that code building a BitArray outside of Scala has to guarantee. */
+  @pure def wellSized: Boolean = {
+    data.length <= (Int.MaxValue >>> 3) && 0 <= _isize && _isize <= 8 * data.length
+  }
+
+  /** The size in bits as stored, whether or not the array is valid; it is `size` when the array is valid. */
+  @pure def storedSize: Int = _isize
+
+  /** Makes the ghost list the one the bytes hold. It assumes nothing of the ghost state, so this is how a BitArray
+    * built outside of Scala, of which only `wellSized` can be checked, becomes valid. */
+  @ghost def establishValid(): Unit = {
+    require(wellSized)
+    BitArray.lemmaWellSizedBounds(_isize, data.length)
+    _size = BigInt(_isize)
+    BitArray.lemmaBitsFromSameContent(0, data, _size)
+    toList = BitArray.bitsFrom(data, 0, _size)
+    assert(data.length <= Int.MaxValue / 8)
+    assert(0 <= _size && _size <= 8 * BigInt(data.length))
+    assert(_size == toList.size)
+    assert(_size <= BigInt(Int.MaxValue))
+    assert(_isize == _size.toInt)
+    assert(BitArray.sameArrayListContent(0, toList, data, _size))
+    assert(valid)
+  }.ensuring(_ => valid && size == old(this).storedSize && storedSize == old(this).storedSize)
+
   @pure def size: Int = {
     require(valid)
-    ghostExpr(Utils.lemmaToIntBigIntConversionBothDirections(_size, 0))
+    ghostExpr({
+      Utils.lemmaToIntBigIntConversionBothDirections(_size, 0)
+      Utils.lemmaToIntBigIntConversionBothDirections(_size, _isize)
+    })
     _isize
   }.ensuring(res =>
-    valid && res == toList.size.toInt && res >= 0
+    valid && res == toList.size.toInt && res >= 0 && BigInt(res) == toList.size
   )
 
   def apply(i: Int): Boolean = {
@@ -141,6 +170,22 @@ object BitArray {
       bit == list(from) && sameArrayListContent(from + 1, list, array, _size)
     }
   }
+
+  /** The Int conditions of `wellSized`, on BigInt as `valid` states them. */
+  @ghost @opaque @inlineOnce
+  def lemmaWellSizedBounds(isize: Int, length: Int): Unit = {
+    require(0 <= length && length <= (Int.MaxValue >>> 3) && 0 <= isize && isize <= 8 * length)
+    Utils.additionIntPreservedByToBigInt(4 * length, 4 * length)
+    Utils.additionIntPreservedByToBigInt(2 * length, 2 * length)
+    Utils.additionIntPreservedByToBigInt(length, length)
+    Utils.compareIntPreservedByToBigInt(isize, 8 * length)
+    Utils.compareIntPreservedByToBigInt(isize, 0)
+    Utils.compareIntPreservedByToBigInt(length, Int.MaxValue / 8)
+    Utils.lemmaConversionBackForth(isize)
+  }.ensuring(_ =>
+    length <= Int.MaxValue / 8 &&
+    0 <= BigInt(isize) && BigInt(isize) <= 8 * BigInt(length) && BigInt(isize) <= BigInt(Int.MaxValue) && BigInt(isize).toInt == isize
+  )
 
   /** Bit i of the array, MSB first. */
   @ghost @pure def bitAt(array: Array[UByte], i: BigInt): Boolean = {

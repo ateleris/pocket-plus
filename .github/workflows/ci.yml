@@ -42,6 +42,20 @@ jobs:
         if: runner.os == 'Windows'
         run: powershell -File install.ps1
 
+      # native/generated/ is committed so that each commit shows how the C changes, and the build only
+      # runs GenC when the Scala is newer than the C, which a fresh checkout does not tell. Regenerate
+      # here, so that GenC is exercised and a commit that forgot to regenerate fails.
+      # Linux-only (one OS gives enough signal; the others build the committed C).
+      - name: Check that the committed generated C is up to date
+        if: runner.os == 'Linux'
+        run: |
+          rm -f native/generated/pocketplus.c native/generated/pocketplus.h
+          ./native/build.sh
+          git diff --exit-code -- native/generated || {
+            echo "native/generated is stale: run ./native/build.sh and commit the result." >&2
+            exit 1
+          }
+
       # C99 + -Werror lint flags live in the build scripts themselves (see native/build.sh and
       # native/pocketplus.vcxproj), so every job below is also the lint gate for its compiler:
       # gcc on Linux, Apple clang on macOS, clang-cl on Windows.

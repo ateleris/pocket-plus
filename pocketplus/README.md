@@ -34,8 +34,9 @@ Open `pocket-plus.slnx`. The first time, accept VS's prompt to create the virtua
 `python/requirements.txt` (or it is created automatically on first build).
 
 **Build Solution** in **Debug** or **Release**:
-  1. regenerates `native/generated/pocketplus.{c,h}` from `scala/src/main/scala/pocket/PocketImperative.scala` and the
-     `BitArray` it is built on, `scala/src/main/scala/pocket/datastructure/` (only when the Scala changed — incremental),
+  1. regenerates `native/generated/pocketplus.{c,h}` from `scala/src/main/scala/pocket/PocketImperative.scala`, the
+     `BitArray` it is built on (`scala/src/main/scala/pocket/datastructure/`) and the specification its contracts
+     refer to (`PocketExecSpec.scala`), only when the Scala changed — incremental,
   2. compiles `pocketplus.dll` with ClangCL,
   3. runs the Python `pytest` interop suite, excluding the slow `verify` test (a failing test fails
      the build).
@@ -88,7 +89,8 @@ env/bin/python -m pytest -m verify         # Stainless verification gate (slow)
   `pp_decompress`, …) is hand-written in `native/src/pp_shim.c` around the entry points of
   `PocketImperative.scala`. It allocates the state buffers once per stream, checks every argument
   before calling the generated code, and takes vectors packed MSB first into bytes. The GenC output
-  in `native/generated/` is never hand-edited.
+  in `native/generated/` is never hand-edited. It is committed, so that each commit shows how the C
+  changes: build before committing a change to the Scala, and commit the regenerated files with it.
 - The C is built as **C99** (`-std=c99 -pedantic` / `/clang:-std=c99`) with warnings as errors:
   `-Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wpointer-arith -Wconversion
   -Werror`, plus `-Wmissing-variable-declarations` where the compiler has it (clang, and gcc from

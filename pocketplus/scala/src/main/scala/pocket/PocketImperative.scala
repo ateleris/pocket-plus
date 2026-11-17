@@ -2,6 +2,8 @@ package pocket
 
 import stainless.lang.{ghost => ghostExpr, *}
 import stainless.annotation.*
+import stainless.collection.*
+import stainless.math.Unsigned.*
 import stainless.lang.StaticChecks
 import stainless.lang.StaticChecks.{Ensuring, WhileDecorations}
 import datastructure.arrays.BitArray
@@ -22,6 +24,9 @@ import datastructure.arrays.BitArray
   *    `StaticChecks.require` and only exists for the prover; so do the class invariants. `ensuring`
   *    and the loop `invariant` are extension methods, which cannot be qualified at the call: theirs
   *    are the `StaticChecks` ones throughout, through the import of its two implicit classes.
+  *  - The buffers of a call are built by the C caller, so an entry point assumes nothing of their
+  *    ghost state: it requires `wellSized`, which is checked at run time, and establishes their
+  *    validity itself. The bit arrays of a state are covered by the class invariant instead.
   *  - This file is tested as generated C, through the C API, while the functional specification keeps
   *    its JVM tests.
   *  - Every buffer is allocated by the caller, inside the state or passed to the call. Nothing is
@@ -38,6 +43,8 @@ object PocketImperative {
     val MaxR: Int = 7
     /** Full change vectors kept for X_t: D_{t-1} .. D_{t-7} (green book table 5-1). */
     val HistoryVectors: Int = 7
+    /** The zero flags of the HistoryVectors slots, all set. */
+    val AllSlotsZero: UByte = 127.toUByte
     /** The definitions only read min(t, 16), so t saturates there. */
     val TSaturation: Int = 16
     /** The decoder's loss counters saturate at 16 (green book 3.3.4.2). */
@@ -83,29 +90,448 @@ object PocketImperative {
     }).invariant(0 <= i && i <= n && src.valid && src.size == n && dst.valid && dst.size == n)
   }.ensuring(_ => dst.valid && dst.size == old(dst).size)
 
-  /** Sets every element of `a` to `v`. */
-  def fillBooleans(a: Array[Boolean], v: Boolean): Unit = {
-    val n = a.length
-    var i = 0
-    (while (i < n) {
-      decreases(n - i)
-      a(i) = v
-      i += 1
-    }).invariant(0 <= i && i <= n && a.length == n)
-  }.ensuring(_ => a.length == old(a).length)
+  /** The basic encoding functions (blue book 5.2), written into a bit array. Each function writes from a position of
+    * the output and is specified by the bits it appends to those before that position, so that the calls compose
+    * by concatenation, like the lists of the functional specification. */
+  object BasicEncodingMut {
+    import BasicEncodingFunctions.*
+
+    /** The first n bits of a, as a list. It is opaque: the functions below are specified by equations between
+      * prefixes, and only `writeBit` needs to know what a prefix is made of. */
+    @ghost @pure @opaque
+    def prefix(a: BitArray, n: Int): List[Boolean] = {
+      require(a.valid && 0 <= n && n <= a.size)
+      datastructure.Utils.compareIntPreservedByToBigInt(n, a.size)
+      datastructure.Utils.compareIntPreservedByToBigInt(n, 0)
+      a.getList.take(BigInt(n))
+    }.ensuring(res => res.size == BigInt(n))
+
+    /** Writes bit b at position pos. */
+    def writeBit(out: BitArray, pos: Int, b: Boolean): Unit = {
+      StaticChecks.require(out.valid)
+      require(0 <= pos && pos < out.size)
+      ghostExpr({
+        val n = out.size
+        assert(BigInt(n) == out.getList.size)
+        datastructure.Utils.compareIntPreservedByToBigInt(pos, n)
+        assert(BigInt(pos) < BigInt(n))
+        datastructure.Utils.compareIntPreservedByToBigInt(pos, 0)
+        assert(BigInt(0) <= BigInt(pos))
+        assert(BigInt(pos) < out.getList.size)
+        datastructure.Utils.additionIntPreservedByToBigInt(pos, 1)
+        ListUtils.lemmaUpdatedTakeSnoc(out.getList, BigInt(pos), b)
+        unfold(prefix(out, pos))
+      })
+      out(pos) = b
+      ghostExpr(unfold(prefix(out, pos + 1)))
+    }.ensuring(_ => out.valid && out.size == old(out).size && prefix(out, pos + 1) == prefix(old(out), pos) ++ List(b))
+
+    /** 1 << k is 2^k as the specification defines it. */
+    @ghost @opaque @inlineOnce
+    def lemmaShiftIsPow2(k: Int): Unit = {
+      require(0 <= k && k <= 29)
+      if (k == 0) assert(BigInt(1 << 0) == pow2Fast(BigInt(0)))
+      else if (k == 1) assert(BigInt(1 << 1) == pow2Fast(BigInt(1)))
+      else if (k == 2) assert(BigInt(1 << 2) == pow2Fast(BigInt(2)))
+      else if (k == 3) assert(BigInt(1 << 3) == pow2Fast(BigInt(3)))
+      else if (k == 4) assert(BigInt(1 << 4) == pow2Fast(BigInt(4)))
+      else if (k == 5) assert(BigInt(1 << 5) == pow2Fast(BigInt(5)))
+      else if (k == 6) assert(BigInt(1 << 6) == pow2Fast(BigInt(6)))
+      else if (k == 7) assert(BigInt(1 << 7) == pow2Fast(BigInt(7)))
+      else if (k == 8) assert(BigInt(1 << 8) == pow2Fast(BigInt(8)))
+      else if (k == 9) assert(BigInt(1 << 9) == pow2Fast(BigInt(9)))
+      else if (k == 10) assert(BigInt(1 << 10) == pow2Fast(BigInt(10)))
+      else if (k == 11) assert(BigInt(1 << 11) == pow2Fast(BigInt(11)))
+      else if (k == 12) assert(BigInt(1 << 12) == pow2Fast(BigInt(12)))
+      else if (k == 13) assert(BigInt(1 << 13) == pow2Fast(BigInt(13)))
+      else if (k == 14) assert(BigInt(1 << 14) == pow2Fast(BigInt(14)))
+      else if (k == 15) assert(BigInt(1 << 15) == pow2Fast(BigInt(15)))
+      else if (k == 16) assert(BigInt(1 << 16) == pow2Fast(BigInt(16)))
+      else if (k == 17) assert(BigInt(1 << 17) == pow2Fast(BigInt(17)))
+      else if (k == 18) assert(BigInt(1 << 18) == pow2Fast(BigInt(18)))
+      else if (k == 19) assert(BigInt(1 << 19) == pow2Fast(BigInt(19)))
+      else if (k == 20) assert(BigInt(1 << 20) == pow2Fast(BigInt(20)))
+      else if (k == 21) assert(BigInt(1 << 21) == pow2Fast(BigInt(21)))
+      else if (k == 22) assert(BigInt(1 << 22) == pow2Fast(BigInt(22)))
+      else if (k == 23) assert(BigInt(1 << 23) == pow2Fast(BigInt(23)))
+      else if (k == 24) assert(BigInt(1 << 24) == pow2Fast(BigInt(24)))
+      else if (k == 25) assert(BigInt(1 << 25) == pow2Fast(BigInt(25)))
+      else if (k == 26) assert(BigInt(1 << 26) == pow2Fast(BigInt(26)))
+      else if (k == 27) assert(BigInt(1 << 27) == pow2Fast(BigInt(27)))
+      else if (k == 28) assert(BigInt(1 << 28) == pow2Fast(BigInt(28)))
+      else if (k == 29) assert(BigInt(1 << 29) == pow2Fast(BigInt(29)))
+    }.ensuring(_ => BigInt(1 << k) == pow2(BigInt(k)))
+
+    /** One step of encodeNBits on machine integers, for k >= 2: the first bit is rem >= half, where half is
+      * 2^(k-1), and the others encode what remains on k - 1 bits, with the weight halved. */
+    @ghost @opaque @inlineOnce
+    def lemmaEncodeNBitsStep(rem: Int, k: Int, half: Int): Unit = {
+      require(2 <= k && k <= 30 && 0 <= rem && 0 <= half)
+      require(BigInt(half) == pow2(BigInt(k) - 1) && BigInt(rem) < pow2(BigInt(k)))
+      val bit = rem >= half
+      val rest = if (bit) rem - half else rem
+      datastructure.Utils.compareIntPreservedByToBigInt(rem, half)
+      datastructure.Utils.compareIntPreservedByToBigInt(rest, 0)
+      datastructure.Utils.subtractionIntPreservedByToBigInt(k, 1)
+      if (bit) {
+        datastructure.Utils.subtractionIntPreservedByToBigInt(rem, half)
+      }
+      datastructure.Utils.lemmaHalfIntToBigInt(half)
+      val bigK = BigInt(k)
+      val bigRem = BigInt(rem)
+      val weight = pow2(bigK) / 2
+      assert(pow2(bigK) == 2 * pow2(bigK - 1))
+      assert(pow2(bigK - 1) == 2 * pow2(bigK - 2))
+      assert(weight == pow2(bigK - 1) && weight == BigInt(half))
+      assert(bigK - 1 == BigInt(k - 1))
+      assert(BigInt(half >>> 1) == pow2(BigInt(k - 1) - 1))
+      assert((bigRem < weight) == !bit)
+      assert(BigInt(rest) == (if (bit) bigRem - weight else bigRem))
+      assert(BigInt(rest) < pow2(BigInt(k - 1)))
+      assert(encodeNBits(bigRem, bigK, pow2(bigK)) == (if (bigRem < weight) Cons(ZERO, encodeNBits(bigRem, bigK - 1, weight)) else Cons(ONE, encodeNBits(bigRem - weight, bigK - 1, weight))))
+    }.ensuring(_ => {
+      val bit = rem >= half
+      val rest = if (bit) rem - half else rem
+      0 <= rest && BigInt(half >>> 1) == pow2(BigInt(k - 1) - 1) && BigInt(rest) < pow2(BigInt(k - 1)) &&
+      encodeNBits(BigInt(rem), BigInt(k), pow2(BigInt(k))) == Cons(bit, encodeNBits(BigInt(rest), BigInt(k - 1), pow2(BigInt(k - 1))))
+    })
+
+    /** The last step of encodeNBits on machine integers: the single bit left is rem >= half, where half is 1. */
+    @ghost @opaque @inlineOnce
+    def lemmaEncodeNBitsLast(rem: Int, k: Int, half: Int): Unit = {
+      require(k == 1 && 0 <= rem && 0 <= half)
+      require(BigInt(half) == pow2(BigInt(k) - 1) && BigInt(rem) < pow2(BigInt(k)))
+      assert(pow2(BigInt(k) - 1) == BigInt(1))
+      assert(pow2(BigInt(k)) == BigInt(2))
+      datastructure.Utils.compareIntPreservedByToBigInt(half, 1)
+      datastructure.Utils.compareIntPreservedByToBigInt(rem, 1)
+      datastructure.Utils.compareIntPreservedByToBigInt(rem, half)
+    }.ensuring(_ => encodeNBits(BigInt(rem), BigInt(k), pow2(BigInt(k))) == List(rem >= half))
+
+    /** Writes the k low bits of rem from position pos, most significant first, where half is 2^(k-1). This is
+      * encodeNBits of the specification: compare with the weight of the bit, subtract it, halve it. */
+    def writeBitsFrom(out: BitArray, pos: Int, rem: Int, k: Int, half: Int): Unit = {
+      StaticChecks.require(out.valid)
+      require(1 <= k && k <= 30 && 0 <= pos && pos <= out.size - k && 0 <= rem && 0 <= half)
+      StaticChecks.require(BigInt(half) == pow2(BigInt(k) - 1) && BigInt(rem) < pow2(BigInt(k)))
+      decreases(k)
+      @ghost val before = prefix(out, pos)
+      val bit = rem >= half
+      if (k > 1) {
+        val rest = if (bit) rem - half else rem
+        ghostExpr({
+          lemmaEncodeNBitsStep(rem, k, half)
+          ListUtils.lemmaAppendCons(before, bit, encodeNBits(BigInt(rest), BigInt(k - 1), pow2(BigInt(k - 1))))
+        })
+        writeBit(out, pos, bit)
+        writeBitsFrom(out, pos + 1, rest, k - 1, half >>> 1)
+      } else {
+        ghostExpr(lemmaEncodeNBitsLast(rem, k, half))
+        writeBit(out, pos, bit)
+      }
+    }.ensuring(_ => out.valid && out.size == old(out).size &&
+      prefix(out, pos + k) == prefix(old(out), pos) ++ encodeNBits(BigInt(rem), BigInt(k), pow2(BigInt(k))))
+
+    /** Writes the n low bits of value from position pos, most significant first. */
+    def writeBits(out: BitArray, pos: Int, value: Int, n: Int): Unit = {
+      StaticChecks.require(out.valid)
+      require(1 <= n && n <= 30 && 0 <= pos && pos <= out.size - n && 0 <= value)
+      StaticChecks.require(BigInt(value) < pow2(BigInt(n)))
+      ghostExpr({
+        lemmaShiftIsPow2(n - 1)
+        datastructure.Utils.subtractionIntPreservedByToBigInt(n, 1)
+      })
+      writeBitsFrom(out, pos, value, n, 1 << (n - 1))
+    }.ensuring(_ => out.valid && out.size == old(out).size &&
+      prefix(out, pos + n) == prefix(old(out), pos) ++ encodeNBits(BigInt(value), BigInt(n), pow2(BigInt(n))))
+
+    /** floor(log2(n)) for 32 <= n <= MaxF, by comparisons as in the specification: no division and no loop. */
+    def log2Floor(n: Int): Int = {
+      require(32 <= n && n <= Layout.MaxF)
+      ghostExpr({
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 32)
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 63)
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 127)
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 255)
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 511)
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 1023)
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 2047)
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 4095)
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 8191)
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 16383)
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 32767)
+        datastructure.Utils.compareIntPreservedByToBigInt(n, 65535)
+      })
+      if (n <= 63) 5
+      else if (n <= 127) 6
+      else if (n <= 255) 7
+      else if (n <= 511) 8
+      else if (n <= 1023) 9
+      else if (n <= 2047) 10
+      else if (n <= 4095) 11
+      else if (n <= 8191) 12
+      else if (n <= 16383) 13
+      else if (n <= 32767) 14
+      else 15
+    }.ensuring(res => 5 <= res && res <= 15 && BigInt(res) == floorLog2(BigInt(n)))
+
+    /** The number of bits E on which COUNT writes a - 2 when a >= 34 (blue book 5.2.2, countE in the specification). */
+    def countWidth(a: Int): Int = {
+      require(34 <= a && a <= Layout.MaxF)
+      2 * (log2Floor(a - 2) + 1) - 6
+    }.ensuring(res => 6 <= res && res <= 26)
+
+    /** COUNT(1) is the single bit 0. */
+    @ghost @opaque @inlineOnce
+    def lemmaCountEncodeOne(a: Int): Unit = {
+      require(a == 1)
+      datastructure.Utils.compareIntPreservedByToBigInt(a, 1)
+    }.ensuring(_ => countEncode(BigInt(a)) == List(ZERO))
+
+    /** The prefixes 110 and 111 of COUNT are 6 and 7 on 3 bits. */
+    @ghost @opaque @inlineOnce
+    def lemmaCountPrefix(): Unit = {
+      assert(pow2(BigInt(3)) == BigInt(8) && pow2(BigInt(2)) == BigInt(4) && pow2(BigInt(1)) == BigInt(2))
+      assert(encodeNBits(BigInt(0), BigInt(1), BigInt(2)) == List(ZERO))
+      assert(encodeNBits(BigInt(1), BigInt(1), BigInt(2)) == List(ONE))
+      assert(encodeNBits(BigInt(2), BigInt(2), BigInt(4)) == List(ONE, ZERO))
+      assert(encodeNBits(BigInt(3), BigInt(2), BigInt(4)) == List(ONE, ONE))
+    }.ensuring(_ => BigInt(6) < pow2(BigInt(3)) && BigInt(7) < pow2(BigInt(3)) &&
+      encodeNBits(BigInt(6), BigInt(3), pow2(BigInt(3))) == List(ONE, ONE, ZERO) &&
+      encodeNBits(BigInt(7), BigInt(3), pow2(BigInt(3))) == List(ONE, ONE, ONE))
+
+    /** COUNT(a) for 2 <= a <= 33 is 110 followed by a - 2 on 5 bits. */
+    @ghost @opaque @inlineOnce
+    def lemmaCountEncodeSmall(a: Int): Unit = {
+      require(2 <= a && a <= 33)
+      datastructure.Utils.compareIntPreservedByToBigInt(a, 1)
+      datastructure.Utils.compareIntPreservedByToBigInt(a, 2)
+      datastructure.Utils.compareIntPreservedByToBigInt(a, 33)
+      datastructure.Utils.subtractionIntPreservedByToBigInt(a, 2)
+      assert(BigInt(a - 2) == BigInt(a) - 2)
+      assert(pow2Fast(BigInt(5)) == pow2(BigInt(5)) && pow2(BigInt(5)) == BigInt(32))
+      lemmaCountPrefix()
+    }.ensuring(_ => BigInt(6) < pow2(BigInt(3)) && BigInt(a - 2) < pow2(BigInt(5)) &&
+      countEncode(BigInt(a)) == encodeNBits(BigInt(6), BigInt(3), pow2(BigInt(3))) ++ encodeNBits(BigInt(a - 2), BigInt(5), pow2(BigInt(5))))
+
+    /** COUNT(a) for a >= 34 is 111 followed by a - 2 on countWidth(a) bits. */
+    @ghost @opaque @inlineOnce
+    def lemmaCountEncodeLarge(a: Int): Unit = {
+      require(34 <= a && a <= Layout.MaxF)
+      val v = a - 2
+      val l = log2Floor(v)
+      val e = countWidth(a)
+      datastructure.Utils.compareIntPreservedByToBigInt(a, 33)
+      datastructure.Utils.compareIntPreservedByToBigInt(a, 65535)
+      datastructure.Utils.subtractionIntPreservedByToBigInt(a, 2)
+      assert(BigInt(v) == BigInt(a) - 2)
+      datastructure.Utils.additionIntPreservedByToBigInt(l, l)
+      datastructure.Utils.subtractionIntPreservedByToBigInt(l + l, 4)
+      assert(e == l + l - 4)
+      assert(BigInt(e) == 2 * BigInt(l) - 4)
+      assert(BigInt(e) == countE(BigInt(v)))
+      assert(pow2Fast(BigInt(e)) == pow2(BigInt(e)))
+      assert(BigInt(v) < pow2Fast(countE(BigInt(v))))
+      lemmaCountPrefix()
+    }.ensuring(_ => BigInt(7) < pow2(BigInt(3)) && BigInt(a - 2) < pow2(BigInt(countWidth(a))) &&
+      countEncode(BigInt(a)) == encodeNBits(BigInt(7), BigInt(3), pow2(BigInt(3))) ++ encodeNBits(BigInt(a - 2), BigInt(countWidth(a)), pow2(BigInt(countWidth(a)))))
+
+    /** Writes COUNT(a) (blue book 5.2.2) from position pos. Returns the position after it, or Errors.ErrCapacity if
+      * it does not fit in out, which may then have been written anywhere from pos on. */
+    def writeCount(out: BitArray, pos: Int, a: Int): Int = {
+      StaticChecks.require(out.valid)
+      require(1 <= a && a <= Layout.MaxF && 0 <= pos && pos <= out.size)
+      val room = out.size - pos
+      @ghost val before = prefix(out, pos)
+      if (a == 1) {
+        if (room < 1) Errors.ErrCapacity
+        else {
+          ghostExpr(lemmaCountEncodeOne(a))
+          writeBit(out, pos, false)
+          pos + 1
+        }
+      } else if (a <= 33) {
+        if (room < 8) Errors.ErrCapacity
+        else {
+          ghostExpr({
+            lemmaCountEncodeSmall(a)
+            ListUtils.lemmaAppendAssoc(before, encodeNBits(BigInt(6), BigInt(3), pow2(BigInt(3))), encodeNBits(BigInt(a - 2), BigInt(5), pow2(BigInt(5))))
+          })
+          writeBits(out, pos, 6, 3)
+          writeBits(out, pos + 3, a - 2, 5)
+          pos + 8
+        }
+      } else {
+        val e = countWidth(a)
+        if (room < 3 + e) Errors.ErrCapacity
+        else {
+          ghostExpr({
+            lemmaCountEncodeLarge(a)
+            ListUtils.lemmaAppendAssoc(before, encodeNBits(BigInt(7), BigInt(3), pow2(BigInt(3))), encodeNBits(BigInt(a - 2), BigInt(e), pow2(BigInt(e))))
+          })
+          writeBits(out, pos, 7, 3)
+          writeBits(out, pos + 3, a - 2, e)
+          pos + 3 + e
+        }
+      }
+    }.ensuring(res => out.valid && out.size == old(out).size && (res == Errors.ErrCapacity || (
+      pos < res && res <= out.size && prefix(out, res) == prefix(old(out), pos) ++ countEncode(BigInt(a)))))
+
+    /** The sizes met while scanning a vector of at most MaxF bits, as the specification states them. */
+    @ghost @opaque @inlineOnce
+    def lemmaScanBounds(n: Int, run: Int, size: Int): Unit = {
+      require(0 <= n && n <= size && size <= Layout.MaxF && 0 <= run && run <= size - n)
+      datastructure.Utils.compareIntPreservedByToBigInt(run, 0)
+      datastructure.Utils.compareIntPreservedByToBigInt(n, 0)
+      datastructure.Utils.compareIntPreservedByToBigInt(run, 65535)
+      datastructure.Utils.compareIntPreservedByToBigInt(n, 65535)
+      datastructure.Utils.additionIntPreservedByToBigInt(run, n)
+      datastructure.Utils.compareIntPreservedByToBigInt(run + n, 65535)
+    }.ensuring(_ => BigInt(0) <= BigInt(run) && BigInt(0) <= BigInt(n) && BigInt(run) + BigInt(n) <= MAX_F)
+
+    /** What is left to write of a run-length encoding when the bits n - 1 down to 0 of x are still to be scanned
+      * and the last `run` bits scanned were zeros: the encoding of these zeros followed by those bits, in scanning
+      * order. The scan is specified by how this list shrinks. */
+    @ghost @pure @opaque
+    def pendingRunLength(x: BitArray, n: Int, run: Int): List[Boolean] = {
+      require(x.valid && 0 <= n && n <= x.size && x.size <= Layout.MaxF && 0 <= run && run <= x.size - n)
+      lemmaScanBounds(n, run, x.size)
+      runLengthEncode(List.fill(BigInt(run))(ZERO) ++ prefix(x, n).reverse)
+    }
+
+    /** The first i + 1 bits in reverse order are bit i followed by the first i bits in reverse order. */
+    @ghost @opaque @inlineOnce
+    def lemmaPrefixReverseCons(x: BitArray, i: Int): Unit = {
+      require(x.valid && 0 <= i && i < x.size)
+      val size = x.size
+      assert(BigInt(size) == x.getList.size)
+      datastructure.Utils.compareIntPreservedByToBigInt(i, size)
+      assert(BigInt(i) < BigInt(size))
+      datastructure.Utils.compareIntPreservedByToBigInt(i, 0)
+      assert(BigInt(0) <= BigInt(i))
+      datastructure.Utils.additionIntPreservedByToBigInt(i, 1)
+      ListUtils.lemmaTakeReverseCons(x.getList, BigInt(i))
+      unfold(prefix(x, i))
+      unfold(prefix(x, i + 1))
+    }.ensuring(_ => prefix(x, i + 1).reverse == Cons(x(i), prefix(x, i).reverse))
+
+    /** Scanning a zero adds it to the run. */
+    @ghost @opaque @inlineOnce
+    def lemmaPendingZero(x: BitArray, n: Int, run: Int): Unit = {
+      require(x.valid && 1 <= n && n <= x.size && x.size <= Layout.MaxF && 0 <= run && run <= x.size - n)
+      require(!x(n - 1))
+      lemmaScanBounds(n, run, x.size)
+      lemmaPrefixReverseCons(x, n - 1)
+      datastructure.Utils.additionIntPreservedByToBigInt(run, 1)
+      lemmaZerosThenZero(BigInt(run), prefix(x, n - 1).reverse)
+      unfold(pendingRunLength(x, n, run))
+      unfold(pendingRunLength(x, n - 1, run + 1))
+    }.ensuring(_ => pendingRunLength(x, n, run) == pendingRunLength(x, n - 1, run + 1))
+
+    /** Scanning a one ends the run: COUNT(run + 1) is due, then what follows with an empty run. */
+    @ghost @opaque @inlineOnce
+    def lemmaPendingOne(x: BitArray, n: Int, run: Int): Unit = {
+      require(x.valid && 1 <= n && n <= x.size && x.size <= Layout.MaxF && 0 <= run && run <= x.size - n)
+      require(x(n - 1))
+      lemmaScanBounds(n, run, x.size)
+      lemmaScanBounds(n - 1, 0, x.size)
+      lemmaPrefixReverseCons(x, n - 1)
+      datastructure.Utils.additionIntPreservedByToBigInt(run, 1)
+      datastructure.Utils.subtractionIntPreservedByToBigInt(n, 1)
+      val rest = prefix(x, n - 1).reverse
+      assert(rest.size == BigInt(n) - 1)
+      lemmaRunLengthEncodeZerosThenOne(BigInt(run), rest)
+      assert(List.fill(BigInt(0))(ZERO) ++ rest == rest)
+      unfold(pendingRunLength(x, n, run))
+      unfold(pendingRunLength(x, n - 1, 0))
+    }.ensuring(_ => pendingRunLength(x, n, run) == countEncode(BigInt(run + 1)) ++ pendingRunLength(x, n - 1, 0))
+
+    /** When no bit is left, the run of trailing zeros is encoded as the terminator 10. */
+    @ghost @opaque @inlineOnce
+    def lemmaPendingEnd(x: BitArray, run: Int): Unit = {
+      require(x.valid && x.size <= Layout.MaxF && 0 <= run && run <= x.size)
+      lemmaScanBounds(0, run, x.size)
+      unfold(prefix(x, 0))
+      assert(prefix(x, 0).reverse == Nil[Boolean]())
+      assert(ListSpecs.rightUnitAppend(List.fill(BigInt(run))(ZERO)))
+      lemmaRunLengthEncodeZeros(BigInt(run))
+      unfold(pendingRunLength(x, 0, run))
+    }.ensuring(_ => pendingRunLength(x, 0, run) == List(ONE, ZERO))
+
+    /** Before the scan, everything is pending: the encoding of x read from its last bit to its first. */
+    @ghost @opaque @inlineOnce
+    def lemmaPendingAll(x: BitArray): Unit = {
+      require(x.valid && x.size <= Layout.MaxF)
+      val size = x.size
+      assert(BigInt(size) == x.getList.size)
+      ListUtils.lemmaTakeAll(x.getList)
+      unfold(prefix(x, size))
+      assert(prefix(x, size) == x.getList)
+      assert(List.fill(BigInt(0))(ZERO) ++ x.getList.reverse == x.getList.reverse)
+      unfold(pendingRunLength(x, size, 0))
+    }.ensuring(_ => pendingRunLength(x, x.size, 0) == runLengthEncode(x.getList.reverse))
+
+    /** Scans the bits n - 1 down to 0 of x, after a run of `run` zeros, and writes from position pos what is left of
+      * the run-length encoding: COUNT(run + 1) at each one, and the terminator at the end. */
+    def writeRunLengthFrom(x: BitArray, n: Int, run: Int, out: BitArray, pos: Int): Int = {
+      StaticChecks.require(x.valid && out.valid)
+      require(0 <= n && n <= x.size && x.size <= Layout.MaxF && 0 <= run && run <= x.size - n && 0 <= pos && pos <= out.size)
+      decreases(n)
+      @ghost val before = prefix(out, pos)
+      if (n == 0) {
+        if (out.size - pos < 2) Errors.ErrCapacity
+        else {
+          ghostExpr({
+            lemmaPendingEnd(x, run)
+            ListUtils.lemmaAppendTwo(before, true, false)
+          })
+          writeBit(out, pos, true)
+          writeBit(out, pos + 1, false)
+          pos + 2
+        }
+      } else if (x(n - 1)) {
+        ghostExpr({
+          lemmaPendingOne(x, n, run)
+          ListUtils.lemmaAppendAssoc(before, countEncode(BigInt(run + 1)), pendingRunLength(x, n - 1, 0))
+        })
+        val next = writeCount(out, pos, run + 1)
+        if (next < 0) next
+        else writeRunLengthFrom(x, n - 1, 0, out, next)
+      } else {
+        ghostExpr(lemmaPendingZero(x, n, run))
+        writeRunLengthFrom(x, n - 1, run + 1, out, pos)
+      }
+    }.ensuring(res => out.valid && out.size == old(out).size && (res == Errors.ErrCapacity || (
+      pos < res && res <= out.size && prefix(out, res) == prefix(old(out), pos) ++ pendingRunLength(x, n, run))))
+
+    /** Writes from position pos the run-length encoding (blue book 5.2.3) of x read from its last bit to its first,
+      * which is the order in which the encoder applies it to X_t and to the mask changes (5.3.2). Returns the
+      * position after it, or Errors.ErrCapacity if it does not fit in out, which may then have been written anywhere
+      * from pos on.
+      *
+      * Exported for now only so that the generated C of the basic encoding functions shows in the diffs: nothing
+      * calls it from C, and the export goes away once encodeStep uses it. */
+    @cCode.`export`
+    def writeRunLengthReversed(x: BitArray, out: BitArray, pos: Int): Int = {
+      StaticChecks.require(x.valid && out.valid)
+      require(x.size <= Layout.MaxF && 0 <= pos && pos <= out.size)
+      ghostExpr(lemmaPendingAll(x))
+      writeRunLengthFrom(x, x.size, 0, out, pos)
+    }.ensuring(res => out.valid && out.size == old(out).size && (res == Errors.ErrCapacity || (
+      pos < res && res <= out.size && prefix(out, res) == prefix(old(out), pos) ++ runLengthEncode(x.getList.reverse))))
+  }
 
   @ghost
-  def encoderInvariant(f: Int, t: Int, lastInput: BitArray, mask: BitArray, build: BitArray, changeHistory: BitArray, changeHistoryZero: Array[Boolean], historyHead: Int, zeroRunBeyond: Int, newMaskHistory: Int, xt: BitArray, yt: BitArray): Boolean = {
+  def encoderInvariant(f: Int, t: Int, lastInput: BitArray, mask: BitArray, build: BitArray, changeHistory: BitArray, changeHistoryZero: UByte, historyHead: Int, zeroRunBeyond: Int, newMaskHistory: UShort, xt: BitArray, yt: BitArray): Boolean = {
     1 <= f && f <= Layout.MaxF &&
     0 <= t && t <= Layout.TSaturation &&
     lastInput.valid && lastInput.size == f &&
     mask.valid && mask.size == f &&
     build.valid && build.size == f &&
     changeHistory.valid && changeHistory.size == Layout.HistoryVectors * Layout.bitsPerSlot(f) &&
-    changeHistoryZero.length == Layout.HistoryVectors &&
+    changeHistoryZero <= Layout.AllSlotsZero &&
     0 <= historyHead && historyHead < Layout.HistoryVectors &&
     0 <= zeroRunBeyond && zeroRunBeyond <= 8 &&
-    0 <= newMaskHistory && newMaskHistory < 32768 &&
     xt.valid && xt.size == f &&
     yt.valid && yt.size == f
   }
@@ -119,10 +545,10 @@ object PocketImperative {
       mask: BitArray,                    // M_{t-1}
       build: BitArray,                   // B_{t-1}
       changeHistory: BitArray,           // D_{t-1} .. D_{t-7}: ring buffer of HistoryVectors slots of Layout.bitsPerSlot(f) bits, newest at historyHead
-      changeHistoryZero: Array[Boolean], // per slot: the stored vector is all zero (Z_t of green book 5.3.1.2)
+      var changeHistoryZero: UByte,      // bit k is set when the vector stored in slot k is all zero (Z_t of green book 5.3.1.2); bit 7 stays clear
       var historyHead: Int,
       var zeroRunBeyond: Int,            // consecutive all-zero D older than the stored ones, saturating at 8
-      var newMaskHistory: Int,           // p_{t-1} .. p_{t-15} in the low 15 bits
+      var newMaskHistory: UShort,        // p_{t-1} .. p_{t-16}, newest in bit 0; the definitions read at most the 15 newest
       xt: BitArray,                      // scratch: X_t
       yt: BitArray                       // scratch: y_t and bit extractions
   ) {
@@ -172,18 +598,18 @@ object PocketImperative {
       */
     @cCode.`export`
     def encoderInit(st: EncoderState, initialMask: BitArray): Unit = {
-      StaticChecks.require(initialMask.valid)
-      require(initialMask.size == st.f)
+      require(initialMask.wellSized && initialMask.storedSize == st.f)
       ghostExpr(st.lemmaInvariant())
+      ghostExpr(initialMask.establishValid())
       st.t = 0
       st.lastInput.clear()
       copyBits(initialMask, st.mask)
       st.build.clear()
       st.changeHistory.clear()
-      fillBooleans(st.changeHistoryZero, true)
+      st.changeHistoryZero = Layout.AllSlotsZero
       st.historyHead = 0
       st.zeroRunBeyond = 0
-      st.newMaskHistory = 0
+      st.newMaskHistory = 0.toUShort
     }.ensuring(_ => st.t == 0)
 
     /** One compression step (blue book sections 4 and 5.3): writes o_t into `out` and returns its length
@@ -207,11 +633,14 @@ object PocketImperative {
         robustnessT: Int,
         out: BitArray
     ): Int = {
-      StaticChecks.require(input.valid && out.valid)
-      require(input.size == st.f)
+      require(input.wellSized && input.storedSize == st.f)
       require(0 <= robustnessT && robustnessT <= Layout.MaxR)
       require(st.t > robustnessT || (sendMaskFlag && uncompressedFlag)) // blue book 3.3.2 c) and d); exact, as t saturates above MaxR
-      require(out.size <= Layout.maxOutputBits(Layout.MaxF))
+      require(out.wellSized && out.storedSize <= Layout.maxOutputBits(Layout.MaxF))
+      ghostExpr({
+        input.establishValid()
+        out.establishValid()
+      })
       0
     }.ensuring(res => out.valid && res <= out.size)
   }
@@ -244,8 +673,12 @@ object PocketImperative {
       */
     @cCode.`export`
     def decodeStep(st: DecoderState, packet: BitArray, out: BitArray): Int = {
-      StaticChecks.require(packet.valid && out.valid)
-      require(out.size == st.f)
+      require(packet.wellSized)
+      require(out.wellSized && out.storedSize == st.f)
+      ghostExpr({
+        packet.establishValid()
+        out.establishValid()
+      })
       Errors.ErrMalformed
     }.ensuring(res => packet.valid && res <= packet.size)
   }

@@ -13,9 +13,11 @@ struct PPCompressor   { EncoderState st; };
 struct PPDecompressor { DecoderState st; };
 
 /* The generated code takes every bit vector as a BitArray: a byte buffer and a size in bits, MSB
-   first. The Scala side requires each one to be valid, a ghost condition GenC cannot turn into an
-   assert, so the two constructors below are what establishes it: 0 <= bits <= 8 * length, and
-   length <= INT32_MAX / 8 (which bits <= MAX_PACKET_BITS gives). */
+   first. What it needs of one is BitArray.wellSized: 0 <= bits <= 8 * length, and
+   length <= INT32_MAX / 8 (which bits <= MAX_PACKET_BITS gives). The two constructors below
+   guarantee it. For the buffers of a call (view) the entry points also assert it, and prove the
+   rest from there; for the buffers of a state (alloc_bits) it is part of the state invariant, which
+   the generated code assumes. */
 
 /* A zeroed bit array of `bits` bits in (bits + 7) / 8 >= 1 bytes; data.data is NULL if the
    allocation failed. */
@@ -24,13 +26,6 @@ static BitArray alloc_bits(int32_t bits) {
     a.data.length = (bits + 7) >> 3;
     a.data.data = (uint8_t*)calloc((size_t)a.data.length, 1);
     a._isize = bits;
-    return a;
-}
-
-static array_bool alloc_bools(int32_t len) {
-    array_bool a;
-    a.data = (bool*)calloc((size_t)len, sizeof(bool));
-    a.length = len;
     return a;
 }
 
@@ -63,7 +58,6 @@ PP_API void pp_compressor_free(PPCompressor* c) {
     free(s->mask.data.data);
     free(s->build.data.data);
     free(s->changeHistory.data.data);
-    free(s->changeHistoryZero.data);
     free(s->xt.data.data);
     free(s->yt.data.data);
     free(c);
@@ -81,14 +75,13 @@ PP_API PPCompressor* pp_compressor_create(int32_t f, const uint8_t* initial_mask
     s->build             = alloc_bits(f);
     /* HISTORY_VECTORS slots of Layout.bitsPerSlot(f) = 8 * nb bits, so each starts on a byte. */
     s->changeHistory     = alloc_bits(HISTORY_VECTORS * 8 * nb);
-    s->changeHistoryZero = alloc_bools(HISTORY_VECTORS);
     s->xt                = alloc_bits(f);
     s->yt                = alloc_bits(f);
     /* encoderInit copies M_0 into the state, so the all-zero default only lives for the call. */
     BitArray m0 = initial_mask ? view(initial_mask, f) : alloc_bits(f);
     if (!s->lastInput.data.data || !s->mask.data.data || !s->build.data.data ||
-        !s->changeHistory.data.data || !s->changeHistoryZero.data || !s->xt.data.data ||
-        !s->yt.data.data || !m0.data.data) {
+        !s->changeHistory.data.data || !s->xt.data.data || !s->yt.data.data ||
+        !m0.data.data) {
         if (!initial_mask) free(m0.data.data);
         pp_compressor_free(c);
         return NULL;

@@ -18,10 +18,6 @@ native/build/
 *.obj
 *.ilk
 
-# --- GenC output (regenerated from scala/src/main/scala/pocket/PocketImperative.scala on build) ---
-native/generated/pocketplus.c
-native/generated/pocketplus.h
-
 # --- Stainless distribution (downloaded by install.sh) ---
 /tools/stainless/
 
