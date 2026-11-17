@@ -100,22 +100,25 @@ case class BitArray(private val data: Array[UByte], private var _isize: Int, @gh
     data(byteIndex) = newByte
   }.ensuring(_ => valid && old(this).toList.updated(ii, v) == toList)
 
+  /** Zeroes the bytes from index k on. The ghost list is left as it is, so the array is no longer valid: `clear`
+    * sets it again. GenC compiles the tail call to a jump, so there is no recursion in the generated C. */
+  private def clearFrom(k: Int): Unit = {
+    require(0 <= k && k <= data.length)
+    decreases(data.length - k)
+    if (k < data.length) {
+      data(k) = 0.toUByte
+      clearFrom(k + 1)
+    }
+  }.ensuring(_ => data == BitArray.zeroedFrom(old(this).data, k) && _isize == old(this)._isize && _size == old(this)._size && toList == old(this).toList)
+
   /** Sets every bit to zero, a byte at a time. The bits of the last byte past the size are zeroed as well. */
   def clear(): Unit = {
     require(valid)
-    val n = data.length
-    @ghost val size0 = _size
-    @ghost val isize0 = _isize
-    var k = 0
-    (while (k < n) {
-      decreases(n - k)
-      ghostExpr(BitArray.lemmaZeroUntilPreservedByUpdated(data, k, k, 0.toUByte))
-      data(k) = 0.toUByte
-      k += 1
-    }).invariant(0 <= k && k <= n && data.length == n && _size == size0 && _isize == isize0 && BitArray.zeroUntil(data, k))
+    @ghost val data0 = snapshot(data)
+    clearFrom(0)
     ghostExpr({
+      BitArray.lemmaBitsFromZeroed(data0, 0, _size)
       BitArray.lemmaBitsFromSameContent(0, data, _size)
-      BitArray.lemmaBitsFromZero(data, 0, _size)
       toList = BitArray.bitsFrom(data, 0, _size)
     })
   }.ensuring(_ => valid && size == old(this).size && _size == old(this)._size && toList == List.fill(_size)(false))
@@ -177,46 +180,35 @@ object BitArray {
     unfold(sameArrayListContent(from, list, array, _size))
   }.ensuring(_ => sameArrayListContent(from, bitsFrom(array, 0, _size), array, _size))
 
-  /** The bytes of the array before index `until` are all zero. */
-  @ghost @pure def zeroUntil(array: Array[UByte], until: Int): Boolean = {
-    require(0 <= until && until <= array.length)
-    decreases(until)
-    until == 0 || (array(until - 1) == 0.toUByte && zeroUntil(array, until - 1))
-  }
+  /** The array with the bytes from index k on set to zero: the functional model of `clearFrom`, whose postcondition
+    * it states. The base case returns a copy because a recursive function may not return its array parameter itself. */
+  @ghost @pure def zeroedFrom(array: Array[UByte], k: Int): Array[UByte] = {
+    require(0 <= k && k <= array.length)
+    decreases(array.length - k)
+    if (k == array.length) freshCopy(array) else zeroedFrom(array.updated(k, 0.toUByte), k + 1)
+  }.ensuring(res => res.length == array.length)
 
-  /** Writing at index k, at or after `until`, keeps the bytes before `until` zero. */
+  /** In the array zeroed from index k on, a byte is zero from k on and unchanged before. */
   @ghost @opaque @inlineOnce
-  def lemmaZeroUntilPreservedByUpdated(array: Array[UByte], until: Int, k: Int, v: UByte): Unit = {
-    require(0 <= until && until <= k && k < array.length)
-    require(zeroUntil(array, until))
-    decreases(until)
-    if (until > 0) {
-      lemmaZeroUntilPreservedByUpdated(array, until - 1, k, v)
+  def lemmaZeroedFromApply(array: Array[UByte], k: Int, j: Int): Unit = {
+    require(0 <= k && k <= array.length && 0 <= j && j < array.length)
+    decreases(array.length - k)
+    if (k < array.length) {
+      lemmaZeroedFromApply(array.updated(k, 0.toUByte), k + 1, j)
     }
-  }.ensuring(_ => zeroUntil(array.updated(k, v), until))
+  }.ensuring(_ => zeroedFrom(array, k)(j) == (if (j >= k) 0.toUByte else array(j)))
 
+  /** The bits of an array zeroed from its first byte are all false. */
   @ghost @opaque @inlineOnce
-  def lemmaZeroUntilImpliesZeroApply(array: Array[UByte], until: Int, j: Int): Unit = {
-    require(0 <= j && j < until && until <= array.length)
-    require(zeroUntil(array, until))
-    decreases(until)
-    if (j < until - 1) {
-      lemmaZeroUntilImpliesZeroApply(array, until - 1, j)
-    }
-  }.ensuring(_ => array(j) == 0.toUByte)
-
-  /** The bits of an array of zero bytes are all false. */
-  @ghost @opaque @inlineOnce
-  def lemmaBitsFromZero(array: Array[UByte], from: BigInt, _size: BigInt): Unit = {
+  def lemmaBitsFromZeroed(array: Array[UByte], from: BigInt, _size: BigInt): Unit = {
     require(0 <= from && from <= _size && _size <= 8 * BigInt(array.length))
-    require(zeroUntil(array, array.length))
     decreases(_size - from)
     if (from < _size) {
       lemmaBitIndexInBounds(from, array.length)
-      lemmaZeroUntilImpliesZeroApply(array, array.length, (from / 8).toInt)
-      lemmaBitsFromZero(array, from + 1, _size)
+      lemmaZeroedFromApply(array, 0, (from / 8).toInt)
+      lemmaBitsFromZeroed(array, from + 1, _size)
     }
-  }.ensuring(_ => bitsFrom(array, from, _size) == List.fill(_size - from)(false))
+  }.ensuring(_ => bitsFrom(zeroedFrom(array, 0), from, _size) == List.fill(_size - from)(false))
 
   /** Setting (v) or clearing (!v) bit b of a byte, counting from the MSB, changes bit b only. */
   @ghost @opaque @inlineOnce
