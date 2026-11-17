@@ -376,6 +376,145 @@ object PocketImperative {
       }
     }.ensuring(res => out.valid && out.size == old(out).size && (res == Errors.ErrCapacity || (
       pos < res && res <= out.size && prefix(out, res) == prefix(old(out), pos) ++ countEncode(BigInt(a)))))
+
+    /** The sizes met while scanning a vector of at most MaxF bits, as the specification states them. */
+    @ghost @opaque @inlineOnce
+    def lemmaScanBounds(n: Int, run: Int, size: Int): Unit = {
+      require(0 <= n && n <= size && size <= Layout.MaxF && 0 <= run && run <= size - n)
+      datastructure.Utils.compareIntPreservedByToBigInt(run, 0)
+      datastructure.Utils.compareIntPreservedByToBigInt(n, 0)
+      datastructure.Utils.compareIntPreservedByToBigInt(run, 65535)
+      datastructure.Utils.compareIntPreservedByToBigInt(n, 65535)
+      datastructure.Utils.additionIntPreservedByToBigInt(run, n)
+      datastructure.Utils.compareIntPreservedByToBigInt(run + n, 65535)
+    }.ensuring(_ => BigInt(0) <= BigInt(run) && BigInt(0) <= BigInt(n) && BigInt(run) + BigInt(n) <= MAX_F)
+
+    /** What is left to write of a run-length encoding when the bits n - 1 down to 0 of x are still to be scanned
+      * and the last `run` bits scanned were zeros: the encoding of these zeros followed by those bits, in scanning
+      * order. The scan is specified by how this list shrinks. */
+    @ghost @pure @opaque
+    def pendingRunLength(x: BitArray, n: Int, run: Int): List[Boolean] = {
+      require(x.valid && 0 <= n && n <= x.size && x.size <= Layout.MaxF && 0 <= run && run <= x.size - n)
+      lemmaScanBounds(n, run, x.size)
+      runLengthEncode(List.fill(BigInt(run))(ZERO) ++ prefix(x, n).reverse)
+    }
+
+    /** The first i + 1 bits in reverse order are bit i followed by the first i bits in reverse order. */
+    @ghost @opaque @inlineOnce
+    def lemmaPrefixReverseCons(x: BitArray, i: Int): Unit = {
+      require(x.valid && 0 <= i && i < x.size)
+      val size = x.size
+      assert(BigInt(size) == x.getList.size)
+      datastructure.Utils.compareIntPreservedByToBigInt(i, size)
+      assert(BigInt(i) < BigInt(size))
+      datastructure.Utils.compareIntPreservedByToBigInt(i, 0)
+      assert(BigInt(0) <= BigInt(i))
+      datastructure.Utils.additionIntPreservedByToBigInt(i, 1)
+      ListUtils.lemmaTakeReverseCons(x.getList, BigInt(i))
+      unfold(prefix(x, i))
+      unfold(prefix(x, i + 1))
+    }.ensuring(_ => prefix(x, i + 1).reverse == Cons(x(i), prefix(x, i).reverse))
+
+    /** Scanning a zero adds it to the run. */
+    @ghost @opaque @inlineOnce
+    def lemmaPendingZero(x: BitArray, n: Int, run: Int): Unit = {
+      require(x.valid && 1 <= n && n <= x.size && x.size <= Layout.MaxF && 0 <= run && run <= x.size - n)
+      require(!x(n - 1))
+      lemmaScanBounds(n, run, x.size)
+      lemmaPrefixReverseCons(x, n - 1)
+      datastructure.Utils.additionIntPreservedByToBigInt(run, 1)
+      lemmaZerosThenZero(BigInt(run), prefix(x, n - 1).reverse)
+      unfold(pendingRunLength(x, n, run))
+      unfold(pendingRunLength(x, n - 1, run + 1))
+    }.ensuring(_ => pendingRunLength(x, n, run) == pendingRunLength(x, n - 1, run + 1))
+
+    /** Scanning a one ends the run: COUNT(run + 1) is due, then what follows with an empty run. */
+    @ghost @opaque @inlineOnce
+    def lemmaPendingOne(x: BitArray, n: Int, run: Int): Unit = {
+      require(x.valid && 1 <= n && n <= x.size && x.size <= Layout.MaxF && 0 <= run && run <= x.size - n)
+      require(x(n - 1))
+      lemmaScanBounds(n, run, x.size)
+      lemmaScanBounds(n - 1, 0, x.size)
+      lemmaPrefixReverseCons(x, n - 1)
+      datastructure.Utils.additionIntPreservedByToBigInt(run, 1)
+      datastructure.Utils.subtractionIntPreservedByToBigInt(n, 1)
+      val rest = prefix(x, n - 1).reverse
+      assert(rest.size == BigInt(n) - 1)
+      lemmaRunLengthEncodeZerosThenOne(BigInt(run), rest)
+      assert(List.fill(BigInt(0))(ZERO) ++ rest == rest)
+      unfold(pendingRunLength(x, n, run))
+      unfold(pendingRunLength(x, n - 1, 0))
+    }.ensuring(_ => pendingRunLength(x, n, run) == countEncode(BigInt(run + 1)) ++ pendingRunLength(x, n - 1, 0))
+
+    /** When no bit is left, the run of trailing zeros is encoded as the terminator 10. */
+    @ghost @opaque @inlineOnce
+    def lemmaPendingEnd(x: BitArray, run: Int): Unit = {
+      require(x.valid && x.size <= Layout.MaxF && 0 <= run && run <= x.size)
+      lemmaScanBounds(0, run, x.size)
+      unfold(prefix(x, 0))
+      assert(prefix(x, 0).reverse == Nil[Boolean]())
+      assert(ListSpecs.rightUnitAppend(List.fill(BigInt(run))(ZERO)))
+      lemmaRunLengthEncodeZeros(BigInt(run))
+      unfold(pendingRunLength(x, 0, run))
+    }.ensuring(_ => pendingRunLength(x, 0, run) == List(ONE, ZERO))
+
+    /** Before the scan, everything is pending: the encoding of x read from its last bit to its first. */
+    @ghost @opaque @inlineOnce
+    def lemmaPendingAll(x: BitArray): Unit = {
+      require(x.valid && x.size <= Layout.MaxF)
+      val size = x.size
+      assert(BigInt(size) == x.getList.size)
+      ListUtils.lemmaTakeAll(x.getList)
+      unfold(prefix(x, size))
+      assert(prefix(x, size) == x.getList)
+      assert(List.fill(BigInt(0))(ZERO) ++ x.getList.reverse == x.getList.reverse)
+      unfold(pendingRunLength(x, size, 0))
+    }.ensuring(_ => pendingRunLength(x, x.size, 0) == runLengthEncode(x.getList.reverse))
+
+    /** Scans the bits n - 1 down to 0 of x, after a run of `run` zeros, and writes from position pos what is left of
+      * the run-length encoding: COUNT(run + 1) at each one, and the terminator at the end. */
+    def writeRunLengthFrom(x: BitArray, n: Int, run: Int, out: BitArray, pos: Int): Int = {
+      StaticChecks.require(x.valid && out.valid)
+      require(0 <= n && n <= x.size && x.size <= Layout.MaxF && 0 <= run && run <= x.size - n && 0 <= pos && pos <= out.size)
+      decreases(n)
+      @ghost val before = prefix(out, pos)
+      if (n == 0) {
+        if (out.size - pos < 2) Errors.ErrCapacity
+        else {
+          ghostExpr({
+            lemmaPendingEnd(x, run)
+            ListUtils.lemmaAppendTwo(before, true, false)
+          })
+          writeBit(out, pos, true)
+          writeBit(out, pos + 1, false)
+          pos + 2
+        }
+      } else if (x(n - 1)) {
+        ghostExpr({
+          lemmaPendingOne(x, n, run)
+          ListUtils.lemmaAppendAssoc(before, countEncode(BigInt(run + 1)), pendingRunLength(x, n - 1, 0))
+        })
+        val next = writeCount(out, pos, run + 1)
+        if (next < 0) next
+        else writeRunLengthFrom(x, n - 1, 0, out, next)
+      } else {
+        ghostExpr(lemmaPendingZero(x, n, run))
+        writeRunLengthFrom(x, n - 1, run + 1, out, pos)
+      }
+    }.ensuring(res => out.valid && out.size == old(out).size && (res == Errors.ErrCapacity || (
+      pos < res && res <= out.size && prefix(out, res) == prefix(old(out), pos) ++ pendingRunLength(x, n, run))))
+
+    /** Writes from position pos the run-length encoding (blue book 5.2.3) of x read from its last bit to its first,
+      * which is the order in which the encoder applies it to X_t and to the mask changes (5.3.2). Returns the
+      * position after it, or Errors.ErrCapacity if it does not fit in out, which may then have been written anywhere
+      * from pos on. */
+    def writeRunLengthReversed(x: BitArray, out: BitArray, pos: Int): Int = {
+      StaticChecks.require(x.valid && out.valid)
+      require(x.size <= Layout.MaxF && 0 <= pos && pos <= out.size)
+      ghostExpr(lemmaPendingAll(x))
+      writeRunLengthFrom(x, x.size, 0, out, pos)
+    }.ensuring(res => out.valid && out.size == old(out).size && (res == Errors.ErrCapacity || (
+      pos < res && res <= out.size && prefix(out, res) == prefix(old(out), pos) ++ runLengthEncode(x.getList.reverse))))
   }
 
   @ghost
