@@ -11,22 +11,23 @@ import datastructure.Utils
 /**
   * Represents a bit array, underlined by an array of unsigned bytes (`uint8_t` in the generated C). The specification is given by a list
   * of booleans, `toList`, which is a ghost projection of the content of the array (as `map` in bolts' MutableLongMap), not a stored field.
-  * The case class carries the size of the array as a ghost variable, as it might not be a multiple of 8. If the size is not a multiple of 8, the last bits of the last byte are ignored.
+  * The case class carries the size of the array, as it might not be a multiple of 8. If the size is not a multiple of 8, the last bits of the last byte are ignored.
   * Bits are packed MSB first: bit i of the list is bit 7 - i % 8 of byte i / 8, i.e., the one selected by the mask 0x80 >>> (i % 8).
   * The executable code computes these indexes as i >>> 3 and i & 7: divisions only appear in ghost code.
+  * The class has no ghost field: the specification (`toList` and `_size`) is computed from the executable state.
   *
   * @param data
   * @param _isize
-  * @param _size
   */
-case class BitArray(private val data: Array[UByte], private var _isize: Int, @ghost private var _size: BigInt) {
+case class BitArray(private val data: Array[UByte], private var _isize: Int) {
 
-  // Links _size with the actual size of the array.
+  /** The size as a BigInt, for the specification. */
+  @ghost @pure def _size: BigInt = BigInt(_isize)
+
+  // Links the size with the actual size of the array.
   @ghost @pure def valid: Boolean = {
     data.length <= Int.MaxValue / 8 &&
-    0 <= _size && _size <= 8 * BigInt(data.length) &&
-    _size <= BigInt(Int.MaxValue) &&
-    _isize == _size.toInt
+    0 <= _isize && _size <= 8 * BigInt(data.length)
   }
 
   /** The abstract content of the bit array: its first `_size` bits. */
@@ -47,6 +48,8 @@ case class BitArray(private val data: Array[UByte], private var _isize: Int, @gh
     require(valid)
     require(i >= 0 && i < size)
     ghostExpr({
+      Utils.lemmaConversionBackForth(_isize)
+      Utils.compareIntPreservedByToBigInt(i, _isize)
       Utils.lemmaToIntBigIntConversionBothDirections(_size, i)
       BitArray.lemmaIntBitIndex(i)
       BitArray.lemmaBitIndexInBounds(BigInt(i), data.length)
@@ -69,6 +72,8 @@ case class BitArray(private val data: Array[UByte], private var _isize: Int, @gh
     require(valid)
     require(i >= 0 && i < size)
     ghostExpr({
+      Utils.lemmaConversionBackForth(_isize)
+      Utils.compareIntPreservedByToBigInt(i, _isize)
       Utils.lemmaToIntBigIntConversionBothDirections(_size, i)
       BitArray.lemmaIntBitIndex(i)
       BitArray.lemmaBitIndexInBounds(BigInt(i), data.length)
@@ -88,6 +93,8 @@ case class BitArray(private val data: Array[UByte], private var _isize: Int, @gh
     require(ii >= 0 && ii < _size)
     val i = ii.toInt
     ghostExpr({
+      Utils.lemmaConversionBackForth(_isize)
+      Utils.compareIntPreservedByToBigInt(i, _isize)
       Utils.lemmaToIntBigIntConversionBothDirections(_size, i)
       Utils.lemmaConversionBackForth(ii)
       BitArray.lemmaIntBitIndex(i)
