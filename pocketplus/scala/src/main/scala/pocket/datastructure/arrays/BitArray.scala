@@ -17,17 +17,17 @@ import datastructure.Utils
   * The class has no ghost field: the specification (`toList` and `_size`) is computed from the executable state.
   *
   * @param data
-  * @param _isize
+  * @param isize
   */
-case class BitArray(private val data: Array[UByte], private var _isize: Int) {
+case class BitArray(private val data: Array[UByte], private var isize: Int) {
 
   /** The size as a BigInt, for the specification. */
-  @ghost @pure def _size: BigInt = BigInt(_isize)
+  @ghost @pure def _size: BigInt = BigInt(isize)
 
   // Links the size with the actual size of the array.
   @ghost @pure def valid: Boolean = {
     data.length <= Int.MaxValue / 8 &&
-    0 <= _isize && _size <= 8 * BigInt(data.length)
+    0 <= _size && _size <= 8 * BigInt(data.length)
   }
 
   /** The abstract content of the bit array: its first `_size` bits. */
@@ -39,7 +39,7 @@ case class BitArray(private val data: Array[UByte], private var _isize: Int) {
   @pure def size: Int = {
     require(valid)
     ghostExpr(Utils.lemmaToIntBigIntConversionBothDirections(_size, 0))
-    _isize
+    isize
   }.ensuring(res =>
     valid && res == toList.size.toInt && res >= 0
   )
@@ -48,8 +48,8 @@ case class BitArray(private val data: Array[UByte], private var _isize: Int) {
     require(valid)
     require(i >= 0 && i < size)
     ghostExpr({
-      Utils.lemmaConversionBackForth(_isize)
-      Utils.compareIntPreservedByToBigInt(i, _isize)
+      Utils.lemmaConversionBackForth(isize)
+      Utils.compareIntPreservedByToBigInt(i, isize)
       Utils.lemmaToIntBigIntConversionBothDirections(_size, i)
       BitArray.lemmaIntBitIndex(i)
       BitArray.lemmaBitIndexInBounds(BigInt(i), data.length)
@@ -72,8 +72,8 @@ case class BitArray(private val data: Array[UByte], private var _isize: Int) {
     require(valid)
     require(i >= 0 && i < size)
     ghostExpr({
-      Utils.lemmaConversionBackForth(_isize)
-      Utils.compareIntPreservedByToBigInt(i, _isize)
+      Utils.lemmaConversionBackForth(isize)
+      Utils.compareIntPreservedByToBigInt(i, isize)
       Utils.lemmaToIntBigIntConversionBothDirections(_size, i)
       BitArray.lemmaIntBitIndex(i)
       BitArray.lemmaBitIndexInBounds(BigInt(i), data.length)
@@ -93,8 +93,8 @@ case class BitArray(private val data: Array[UByte], private var _isize: Int) {
     require(ii >= 0 && ii < _size)
     val i = ii.toInt
     ghostExpr({
-      Utils.lemmaConversionBackForth(_isize)
-      Utils.compareIntPreservedByToBigInt(i, _isize)
+      Utils.lemmaConversionBackForth(isize)
+      Utils.compareIntPreservedByToBigInt(i, isize)
       Utils.lemmaToIntBigIntConversionBothDirections(_size, i)
       Utils.lemmaConversionBackForth(ii)
       BitArray.lemmaIntBitIndex(i)
@@ -119,7 +119,7 @@ case class BitArray(private val data: Array[UByte], private var _isize: Int) {
       data(k) = 0.toUByte
       clearFrom(k + 1)
     }
-  }.ensuring(_ => data == BitArray.zeroedFrom(old(this).data, k) && _isize == old(this)._isize && _size == old(this)._size)
+  }.ensuring(_ => data == BitArray.zeroedFrom(old(this).data, k) && isize == old(this).isize && _size == old(this)._size)
 
   /** Sets every bit to zero, a byte at a time. The bits of the last byte past the size are zeroed as well. */
   def clear(): Unit = {
