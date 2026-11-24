@@ -243,7 +243,7 @@ sentMask.valid && sentMask.size == f
 
 #### Correspondence with the functional states
 
-The tables below give the simulation relation field by field. A bit vector `v` of F bits is a `BitArray` packed MSB first into `bytesPerVector(F)` bytes; `toList(v)` denotes its ghost list `v.getList`, the F booleans in order, which the validity of the `BitArray` ties to the bytes. The unused low bits of the last byte are not part of the list. The relation is not a function: a `t` past the saturation point and the contents of change vectors older than the seventh cannot be recovered from the imperative state.
+The tables below give the simulation relation field by field. A bit vector `v` of F bits is a `BitArray` packed MSB first into `bytesPerVector(F)` bytes; `toList(v)` denotes its ghost list `v.toList`, the F booleans in order, a ghost projection computed from the bytes (`BitArray.bitsFrom`). The unused low bits of the last byte are not part of the list. The relation is not a function: a `t` past the saturation point and the contents of change vectors older than the seventh cannot be recovered from the imperative state.
 
 Encoder, `CompressionState` against `EncoderState`:
 

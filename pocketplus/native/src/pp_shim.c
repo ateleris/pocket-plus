@@ -23,7 +23,7 @@ static BitArray alloc_bits(int32_t bits) {
     BitArray a;
     a.data.length = (bits + 7) >> 3;
     a.data.data = (uint8_t*)calloc((size_t)a.data.length, 1);
-    a._isize = bits;
+    a.isize = bits;
     return a;
 }
 
@@ -40,7 +40,7 @@ static BitArray view(const uint8_t* p, int32_t bits) {
     BitArray a;
     a.data.data = (uint8_t*)p;
     a.data.length = (bits + 7) >> 3;
-    a._isize = bits;
+    a.isize = bits;
     return a;
 }
 
