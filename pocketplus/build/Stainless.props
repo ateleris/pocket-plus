@@ -15,7 +15,8 @@
          code, so GenC has to read it, but none of it ends up in the C. -->
     <SpecSource>$(RepoRoot)scala\src\main\scala\pocket\PocketExecSpec.scala</SpecSource>
     <!-- The lemmas of the refinement proof: ghost code too, read by GenC for the same reason. -->
-    <LemmasSource>$(RepoRoot)scala\src\main\scala\pocket\PocketImperativeLemmas.scala</LemmasSource>
+    <SpecLemmasSource>$(RepoRoot)scala\src\main\scala\pocket\PocketExecSpecLemmas.scala</SpecLemmasSource>
+    <ListLemmasSource>$(RepoRoot)scala\src\main\scala\pocket\ListLemmas.scala</ListLemmasSource>
     <GenCDir>$(RepoRoot)native\generated\</GenCDir>
     <GenCSource>$(GenCDir)pocketplus.c</GenCSource>
     <GenCHeader>$(GenCDir)pocketplus.h</GenCHeader>

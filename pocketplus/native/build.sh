@@ -20,7 +20,8 @@ scala_srcs=(
   "$scala_dir/datastructure/arrays/BitArray.scala"
   "$scala_dir/datastructure/Utils.scala"
   "$scala_dir/PocketExecSpec.scala"
-  "$scala_dir/PocketImperativeLemmas.scala"
+  "$scala_dir/PocketExecSpecLemmas.scala"
+  "$scala_dir/ListLemmas.scala"
 )
 genc_c="$here/generated/pocketplus.c"
 jvm_args="-Xss512m --sun-misc-unsafe-memory-access=allow"

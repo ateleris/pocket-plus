@@ -92,7 +92,7 @@ object PocketImperative {
     * by concatenation, like the lists of the functional specification. */
   object BasicEncodingMut {
     import BasicEncodingFunctions.*
-    import PocketImperativeLemmas.*
+    import PocketExecSpecLemmas.*
 
     /** The first n bits of a, as a list. It is opaque: the functions below are specified by equations between
       * prefixes, and only `writeBit` needs to know what a prefix is made of. */
@@ -117,94 +117,12 @@ object PocketImperative {
         assert(BigInt(0) <= BigInt(pos))
         assert(BigInt(pos) < out.toList.size)
         datastructure.Utils.additionIntPreservedByToBigInt(pos, 1)
-        lemmaUpdatedTakeSnoc(out.toList, BigInt(pos), b)
+        ListLemmas.lemmaUpdatedTakeSnoc(out.toList, BigInt(pos), b)
         unfold(prefix(out, pos))
       })
       out(pos) = b
       ghostExpr(unfold(prefix(out, pos + 1)))
     }.ensuring(_ => out.valid && out.size == old(out).size && prefix(out, pos + 1) == prefix(old(out), pos) ++ List(b))
-
-    /** 1 << k is 2^k as the specification defines it. */
-    @ghost @opaque @inlineOnce
-    def lemmaShiftIsPow2(k: Int): Unit = {
-      require(0 <= k && k <= 29)
-      if (k == 0) assert(BigInt(1 << 0) == pow2Fast(BigInt(0)))
-      else if (k == 1) assert(BigInt(1 << 1) == pow2Fast(BigInt(1)))
-      else if (k == 2) assert(BigInt(1 << 2) == pow2Fast(BigInt(2)))
-      else if (k == 3) assert(BigInt(1 << 3) == pow2Fast(BigInt(3)))
-      else if (k == 4) assert(BigInt(1 << 4) == pow2Fast(BigInt(4)))
-      else if (k == 5) assert(BigInt(1 << 5) == pow2Fast(BigInt(5)))
-      else if (k == 6) assert(BigInt(1 << 6) == pow2Fast(BigInt(6)))
-      else if (k == 7) assert(BigInt(1 << 7) == pow2Fast(BigInt(7)))
-      else if (k == 8) assert(BigInt(1 << 8) == pow2Fast(BigInt(8)))
-      else if (k == 9) assert(BigInt(1 << 9) == pow2Fast(BigInt(9)))
-      else if (k == 10) assert(BigInt(1 << 10) == pow2Fast(BigInt(10)))
-      else if (k == 11) assert(BigInt(1 << 11) == pow2Fast(BigInt(11)))
-      else if (k == 12) assert(BigInt(1 << 12) == pow2Fast(BigInt(12)))
-      else if (k == 13) assert(BigInt(1 << 13) == pow2Fast(BigInt(13)))
-      else if (k == 14) assert(BigInt(1 << 14) == pow2Fast(BigInt(14)))
-      else if (k == 15) assert(BigInt(1 << 15) == pow2Fast(BigInt(15)))
-      else if (k == 16) assert(BigInt(1 << 16) == pow2Fast(BigInt(16)))
-      else if (k == 17) assert(BigInt(1 << 17) == pow2Fast(BigInt(17)))
-      else if (k == 18) assert(BigInt(1 << 18) == pow2Fast(BigInt(18)))
-      else if (k == 19) assert(BigInt(1 << 19) == pow2Fast(BigInt(19)))
-      else if (k == 20) assert(BigInt(1 << 20) == pow2Fast(BigInt(20)))
-      else if (k == 21) assert(BigInt(1 << 21) == pow2Fast(BigInt(21)))
-      else if (k == 22) assert(BigInt(1 << 22) == pow2Fast(BigInt(22)))
-      else if (k == 23) assert(BigInt(1 << 23) == pow2Fast(BigInt(23)))
-      else if (k == 24) assert(BigInt(1 << 24) == pow2Fast(BigInt(24)))
-      else if (k == 25) assert(BigInt(1 << 25) == pow2Fast(BigInt(25)))
-      else if (k == 26) assert(BigInt(1 << 26) == pow2Fast(BigInt(26)))
-      else if (k == 27) assert(BigInt(1 << 27) == pow2Fast(BigInt(27)))
-      else if (k == 28) assert(BigInt(1 << 28) == pow2Fast(BigInt(28)))
-      else if (k == 29) assert(BigInt(1 << 29) == pow2Fast(BigInt(29)))
-    }.ensuring(_ => BigInt(1 << k) == pow2(BigInt(k)))
-
-    /** One step of encodeNBits on machine integers, for k >= 2: the first bit is rem >= half, where half is
-      * 2^(k-1), and the others encode what remains on k - 1 bits, with the weight halved. */
-    @ghost @opaque @inlineOnce
-    def lemmaEncodeNBitsStep(rem: Int, k: Int, half: Int): Unit = {
-      require(2 <= k && k <= 30 && 0 <= rem && 0 <= half)
-      require(BigInt(half) == pow2(BigInt(k) - 1) && BigInt(rem) < pow2(BigInt(k)))
-      val bit = rem >= half
-      val rest = if (bit) rem - half else rem
-      datastructure.Utils.compareIntPreservedByToBigInt(rem, half)
-      datastructure.Utils.compareIntPreservedByToBigInt(rest, 0)
-      datastructure.Utils.subtractionIntPreservedByToBigInt(k, 1)
-      if (bit) {
-        datastructure.Utils.subtractionIntPreservedByToBigInt(rem, half)
-      }
-      datastructure.Utils.lemmaHalfIntToBigInt(half)
-      val bigK = BigInt(k)
-      val bigRem = BigInt(rem)
-      val weight = pow2(bigK) / 2
-      assert(pow2(bigK) == 2 * pow2(bigK - 1))
-      assert(pow2(bigK - 1) == 2 * pow2(bigK - 2))
-      assert(weight == pow2(bigK - 1) && weight == BigInt(half))
-      assert(bigK - 1 == BigInt(k - 1))
-      assert(BigInt(half >>> 1) == pow2(BigInt(k - 1) - 1))
-      assert((bigRem < weight) == !bit)
-      assert(BigInt(rest) == (if (bit) bigRem - weight else bigRem))
-      assert(BigInt(rest) < pow2(BigInt(k - 1)))
-      assert(encodeNBits(bigRem, bigK, pow2(bigK)) == (if (bigRem < weight) Cons(ZERO, encodeNBits(bigRem, bigK - 1, weight)) else Cons(ONE, encodeNBits(bigRem - weight, bigK - 1, weight))))
-    }.ensuring(_ => {
-      val bit = rem >= half
-      val rest = if (bit) rem - half else rem
-      0 <= rest && BigInt(half >>> 1) == pow2(BigInt(k - 1) - 1) && BigInt(rest) < pow2(BigInt(k - 1)) &&
-      encodeNBits(BigInt(rem), BigInt(k), pow2(BigInt(k))) == Cons(bit, encodeNBits(BigInt(rest), BigInt(k - 1), pow2(BigInt(k - 1))))
-    })
-
-    /** The last step of encodeNBits on machine integers: the single bit left is rem >= half, where half is 1. */
-    @ghost @opaque @inlineOnce
-    def lemmaEncodeNBitsLast(rem: Int, k: Int, half: Int): Unit = {
-      require(k == 1 && 0 <= rem && 0 <= half)
-      require(BigInt(half) == pow2(BigInt(k) - 1) && BigInt(rem) < pow2(BigInt(k)))
-      assert(pow2(BigInt(k) - 1) == BigInt(1))
-      assert(pow2(BigInt(k)) == BigInt(2))
-      datastructure.Utils.compareIntPreservedByToBigInt(half, 1)
-      datastructure.Utils.compareIntPreservedByToBigInt(rem, 1)
-      datastructure.Utils.compareIntPreservedByToBigInt(rem, half)
-    }.ensuring(_ => encodeNBits(BigInt(rem), BigInt(k), pow2(BigInt(k))) == List(rem >= half))
 
     /** Writes the k low bits of rem from position pos, most significant first, where half is 2^(k-1). This is
       * encodeNBits of the specification: compare with the weight of the bit, subtract it, halve it. */
@@ -219,7 +137,7 @@ object PocketImperative {
         val rest = if (bit) rem - half else rem
         ghostExpr({
           lemmaEncodeNBitsStep(rem, k, half)
-          lemmaAppendCons(before, bit, encodeNBits(BigInt(rest), BigInt(k - 1), pow2(BigInt(k - 1))))
+          ListLemmas.lemmaAppendCons(before, bit, encodeNBits(BigInt(rest), BigInt(k - 1), pow2(BigInt(k - 1))))
         })
         writeBit(out, pos, bit)
         writeBitsFrom(out, pos + 1, rest, k - 1, half >>> 1)
@@ -278,39 +196,6 @@ object PocketImperative {
       require(34 <= a && a <= Layout.MaxF)
       2 * (log2Floor(a - 2) + 1) - 6
     }.ensuring(res => 6 <= res && res <= 26)
-
-    /** COUNT(1) is the single bit 0. */
-    @ghost @opaque @inlineOnce
-    def lemmaCountEncodeOne(a: Int): Unit = {
-      require(a == 1)
-      datastructure.Utils.compareIntPreservedByToBigInt(a, 1)
-    }.ensuring(_ => countEncode(BigInt(a)) == List(ZERO))
-
-    /** The prefixes 110 and 111 of COUNT are 6 and 7 on 3 bits. */
-    @ghost @opaque @inlineOnce
-    def lemmaCountPrefix(): Unit = {
-      assert(pow2(BigInt(3)) == BigInt(8) && pow2(BigInt(2)) == BigInt(4) && pow2(BigInt(1)) == BigInt(2))
-      assert(encodeNBits(BigInt(0), BigInt(1), BigInt(2)) == List(ZERO))
-      assert(encodeNBits(BigInt(1), BigInt(1), BigInt(2)) == List(ONE))
-      assert(encodeNBits(BigInt(2), BigInt(2), BigInt(4)) == List(ONE, ZERO))
-      assert(encodeNBits(BigInt(3), BigInt(2), BigInt(4)) == List(ONE, ONE))
-    }.ensuring(_ => BigInt(6) < pow2(BigInt(3)) && BigInt(7) < pow2(BigInt(3)) &&
-      encodeNBits(BigInt(6), BigInt(3), pow2(BigInt(3))) == List(ONE, ONE, ZERO) &&
-      encodeNBits(BigInt(7), BigInt(3), pow2(BigInt(3))) == List(ONE, ONE, ONE))
-
-    /** COUNT(a) for 2 <= a <= 33 is 110 followed by a - 2 on 5 bits. */
-    @ghost @opaque @inlineOnce
-    def lemmaCountEncodeSmall(a: Int): Unit = {
-      require(2 <= a && a <= 33)
-      datastructure.Utils.compareIntPreservedByToBigInt(a, 1)
-      datastructure.Utils.compareIntPreservedByToBigInt(a, 2)
-      datastructure.Utils.compareIntPreservedByToBigInt(a, 33)
-      datastructure.Utils.subtractionIntPreservedByToBigInt(a, 2)
-      assert(BigInt(a - 2) == BigInt(a) - 2)
-      assert(pow2Fast(BigInt(5)) == pow2(BigInt(5)) && pow2(BigInt(5)) == BigInt(32))
-      lemmaCountPrefix()
-    }.ensuring(_ => BigInt(6) < pow2(BigInt(3)) && BigInt(a - 2) < pow2(BigInt(5)) &&
-      countEncode(BigInt(a)) == encodeNBits(BigInt(6), BigInt(3), pow2(BigInt(3))) ++ encodeNBits(BigInt(a - 2), BigInt(5), pow2(BigInt(5))))
 
     /** COUNT(a) for a >= 34 is 111 followed by a - 2 on countWidth(a) bits. */
     @ghost @opaque @inlineOnce
@@ -408,7 +293,7 @@ object PocketImperative {
       datastructure.Utils.compareIntPreservedByToBigInt(i, 0)
       assert(BigInt(0) <= BigInt(i))
       datastructure.Utils.additionIntPreservedByToBigInt(i, 1)
-      lemmaTakeReverseCons(x.toList, BigInt(i))
+      ListLemmas.lemmaTakeReverseCons(x.toList, BigInt(i))
       unfold(prefix(x, i))
       unfold(prefix(x, i + 1))
     }.ensuring(_ => prefix(x, i + 1).reverse == Cons(x(i), prefix(x, i).reverse))
