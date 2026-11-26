@@ -641,7 +641,8 @@ object EncodeDecodeRoundTripProof {
   def lemmaNotReverseNotReverse(m: List[Boolean]): Unit = {
     lemmaNotReverse(not(m))
     lemmaNotNot(m)
-    assert(ListSpecs.reverseReverse(m))
+    ListSpecs.reverseReverse(m)
+    ()
   }.ensuring(_ => not(not(m).reverse).reverse == m)
 
   /** maskFromDiff inverts `xor(m, leftShift(m))`. */
@@ -736,7 +737,7 @@ object EncodeDecodeRoundTripProof {
       BasicEncodingFunctions.lemmaRunLengthEncodingSizeCorrectWithSuffix(diff.reverse, ut)
       ListUtils.lemmaSplitAtIndexConcatSize(diffEncoded, ut, diffEncoded.size)
       BasicEncodingFunctions.lemmarunLengthEncodeRoundTrip(diff.reverse)
-      assert(ListSpecs.reverseReverse(diff))
+      ListSpecs.reverseReverse(diff)
       lemmaMaskFromDiff(mt)
     }
   }.ensuring(_ => {
@@ -872,7 +873,7 @@ object EncodeDecodeRoundTripProof {
     require(xt == or(f, ds ++ List(xor(mt, mtMinusOne))).reverse)
     val dvect = xor(mt, mtMinusOne)
     val orX = or(f, ds ++ List(dvect))
-    assert(ListSpecs.reverseReverse(orX))
+    ListSpecs.reverseReverse(orX)
     lemmaEqualWhereSelectIsZeroXor(mt, mtMinusOne)
     lemmaEqualWhereSelectIsZeroOrList(mt, mtMinusOne, f, ds, dvect)
     lemmaEqualWhereSelectIsZeroNot(mt, mtMinusOne, orX)
@@ -887,8 +888,8 @@ object EncodeDecodeRoundTripProof {
     if isAllZero(xt) then {
       lemmaEqualWhereSelectIsZeroReverse(mt, mtMinusOne, orX)
       lemmaEqualWhereSelectAllZeroThenEqual(mt.reverse, mtMinusOne.reverse, xt)
-      assert(ListSpecs.reverseReverse(mt))
-      assert(ListSpecs.reverseReverse(mtMinusOne))
+      ListSpecs.reverseReverse(mt)
+      ListSpecs.reverseReverse(mtMinusOne)
       lemmaIsAllZeroReverse(xt)
       lemmaXorPreservesAllZero(mtMinusOne, xt.reverse)
     }
@@ -979,6 +980,7 @@ object EncodeDecodeRoundTripProof {
 
     lemmaDecodeFields(st, it, mt, xt, yt, vt, et, kt, ct, dt, ft, rt, qt, ut, selector)
     ListUtils.lemmaPacketAssoc(rle, vtBits, et, kt, ct, List(dt), qt, ut)
+    ()
   }.ensuring(_ => {
     val res = Encoder.outputVector(params, it, pt, ft, rt, robustnessT)
     Decoder.decodeOutputVector(decoderView(params), res._1) == Some((it, res._3))
@@ -1557,7 +1559,7 @@ object BasicEncodingFunctions {
         val n = leadingZeros.size + 1
         val tlEncoded = runLengthEncode(tl)
         assert(encoded == countEncode(n) ++ tlEncoded)
-        assert(ListSpecs.appendAssoc(countEncode(n), tlEncoded, suffix))
+        ListSpecs.appendAssoc(countEncode(n), tlEncoded, suffix)
         lemmaCountDecodeSizeCorrect(n, countEncode(n))
         lemmaCountDecodeSizeIsNotAffectedBySuffix(n, countEncode(n), tlEncoded ++ suffix)
         assert(countDecodeSize(encoded ++ suffix) == countEncode(n).size)
@@ -1612,7 +1614,7 @@ object BasicEncodingFunctions {
     require(a.size == b.size && base.size == b.size)
     require(equalWhereSelectIsZero(a, base, b))
     lemmaBitExtractionSize(a, b)
-    assert(ListSpecs.reverseReverse(bitExtractionMsbFirst(a, b)))
+    ListSpecs.reverseReverse(bitExtractionMsbFirst(a, b))
     lemmaBitInsertionExtractionMsbFirst(a, base, b)
   }.ensuring(_ => {
     lemmaBitExtractionSize(a, b)
@@ -1899,13 +1901,14 @@ object ListUtils {
   /** The packet as the encoder concatenates it (left-associated) is the packet as the decoder peels it off (right-associated). */
   @ghost @inlineOnce @opaque
   def lemmaPacketAssoc[A](a: List[A], b: List[A], c: List[A], d: List[A], e: List[A], f: List[A], g: List[A], h: List[A]): Unit = {
-    assert(ListSpecs.appendAssoc(g, Nil[A](), h))
-    assert(ListSpecs.appendAssoc(a ++ b ++ c ++ d ++ e ++ f, g, h))
-    assert(ListSpecs.appendAssoc(a ++ b ++ c ++ d ++ e, f, g ++ h))
-    assert(ListSpecs.appendAssoc(a ++ b ++ c ++ d, e, f ++ (g ++ h)))
-    assert(ListSpecs.appendAssoc(a ++ b ++ c, d, e ++ (f ++ (g ++ h))))
-    assert(ListSpecs.appendAssoc(a ++ b, c, d ++ (e ++ (f ++ (g ++ h)))))
-    assert(ListSpecs.appendAssoc(a, b, c ++ (d ++ (e ++ (f ++ (g ++ h))))))
+    ListSpecs.appendAssoc(g, Nil[A](), h)
+    ListSpecs.appendAssoc(a ++ b ++ c ++ d ++ e ++ f, g, h)
+    ListSpecs.appendAssoc(a ++ b ++ c ++ d ++ e, f, g ++ h)
+    ListSpecs.appendAssoc(a ++ b ++ c ++ d, e, f ++ (g ++ h))
+    ListSpecs.appendAssoc(a ++ b ++ c, d, e ++ (f ++ (g ++ h)))
+    ListSpecs.appendAssoc(a ++ b, c, d ++ (e ++ (f ++ (g ++ h))))
+    ListSpecs.appendAssoc(a, b, c ++ (d ++ (e ++ (f ++ (g ++ h)))))
+    ()
   }.ensuring(_ => a ++ b ++ c ++ d ++ e ++ f ++ g ++ h == a ++ (b ++ (c ++ (d ++ (e ++ (f ++ (g ++ h)))))))
 
   @ghost @inlineOnce @opaque
