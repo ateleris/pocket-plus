@@ -54,6 +54,11 @@ solvers are set in `scala/stainless.conf`; for a one-off run, `python -m pocketp
 passes any Stainless option through. Set `POCKETPLUS_VERIFY_PARALLEL` to change how many VCs are
 checked at once (default 4; CI uses 1, see `verify.py`).
 
+`scala/stainless.conf` also sets `sat-precond`: for each function, Stainless looks for values that
+satisfy its preconditions, so that a contract that nothing can satisfy does not pass as proved. A
+precondition proved unsatisfiable fails the gate. A search that times out proves nothing either way:
+it is listed in the output and does not fail the gate.
+
 ## Build / test (command line, Windows)
 
 From a *Developer Command Prompt for VS* (so `msbuild`/ClangCL are on `PATH`):
