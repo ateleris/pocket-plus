@@ -14,6 +14,8 @@
     <!-- The functional specification: PocketImperative.scala refers to it in its contracts and ghost
          code, so GenC has to read it, but none of it ends up in the C. -->
     <SpecSource>$(RepoRoot)scala\src\main\scala\pocket\PocketExecSpec.scala</SpecSource>
+    <!-- The lemmas of the refinement proof: ghost code too, read by GenC for the same reason. -->
+    <LemmasSource>$(RepoRoot)scala\src\main\scala\pocket\PocketImperativeLemmas.scala</LemmasSource>
     <GenCDir>$(RepoRoot)native\generated\</GenCDir>
     <GenCSource>$(GenCDir)pocketplus.c</GenCSource>
     <GenCHeader>$(GenCDir)pocketplus.h</GenCHeader>

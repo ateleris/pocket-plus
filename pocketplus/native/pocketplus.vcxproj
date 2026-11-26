@@ -91,6 +91,7 @@
     <None Include="..\scala\src\main\scala\pocket\datastructure\arrays\BitArray.scala" />
     <None Include="..\scala\src\main\scala\pocket\datastructure\Utils.scala" />
     <None Include="..\scala\src\main\scala\pocket\PocketExecSpec.scala" />
+    <None Include="..\scala\src\main\scala\pocket\PocketImperativeLemmas.scala" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

@@ -92,6 +92,7 @@ object PocketImperative {
     * by concatenation, like the lists of the functional specification. */
   object BasicEncodingMut {
     import BasicEncodingFunctions.*
+    import PocketImperativeLemmas.*
 
     /** The first n bits of a, as a list. It is opaque: the functions below are specified by equations between
       * prefixes, and only `writeBit` needs to know what a prefix is made of. */
@@ -116,7 +117,7 @@ object PocketImperative {
         assert(BigInt(0) <= BigInt(pos))
         assert(BigInt(pos) < out.toList.size)
         datastructure.Utils.additionIntPreservedByToBigInt(pos, 1)
-        ListUtils.lemmaUpdatedTakeSnoc(out.toList, BigInt(pos), b)
+        lemmaUpdatedTakeSnoc(out.toList, BigInt(pos), b)
         unfold(prefix(out, pos))
       })
       out(pos) = b
@@ -218,7 +219,7 @@ object PocketImperative {
         val rest = if (bit) rem - half else rem
         ghostExpr({
           lemmaEncodeNBitsStep(rem, k, half)
-          ListUtils.lemmaAppendCons(before, bit, encodeNBits(BigInt(rest), BigInt(k - 1), pow2(BigInt(k - 1))))
+          lemmaAppendCons(before, bit, encodeNBits(BigInt(rest), BigInt(k - 1), pow2(BigInt(k - 1))))
         })
         writeBit(out, pos, bit)
         writeBitsFrom(out, pos + 1, rest, k - 1, half >>> 1)
@@ -407,7 +408,7 @@ object PocketImperative {
       datastructure.Utils.compareIntPreservedByToBigInt(i, 0)
       assert(BigInt(0) <= BigInt(i))
       datastructure.Utils.additionIntPreservedByToBigInt(i, 1)
-      ListUtils.lemmaTakeReverseCons(x.toList, BigInt(i))
+      lemmaTakeReverseCons(x.toList, BigInt(i))
       unfold(prefix(x, i))
       unfold(prefix(x, i + 1))
     }.ensuring(_ => prefix(x, i + 1).reverse == Cons(x(i), prefix(x, i).reverse))

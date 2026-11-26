@@ -14,6 +14,7 @@ fi
 JAVA_OPTS="-Dparallel=${PARALLEL:-2} ${JAVA_OPTS:-}" stainless\
   ./src/main/scala/pocket/PocketExecSpec.scala\
   ./src/main/scala/pocket/PocketImperative.scala\
+  ./src/main/scala/pocket/PocketImperativeLemmas.scala\
   ./src/main/scala/pocket/datastructure/arrays/BitArray.scala\
   ./src/main/scala/pocket/datastructure/arrays/ByteArray.scala\
   ./src/main/scala/pocket/datastructure/arrays/IntArray.scala\
