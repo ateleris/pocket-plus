@@ -42,7 +42,6 @@ object ListLemmas {
   def lemmaTakeReverseCons[A](l: List[A], i: BigInt): Unit = {
     require(0 <= i && i < l.size)
     lemmaTakeSnoc(l, i)
-    ListSpecs.snocIsAppend(l.take(i), l(i))
     ListSpecs.snocReverse(l.take(i), l(i))
     ()
   }.ensuring(_ => l.take(i + 1).reverse == Cons(l(i), l.take(i).reverse))

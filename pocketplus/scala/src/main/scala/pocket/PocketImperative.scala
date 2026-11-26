@@ -110,11 +110,7 @@ object PocketImperative {
       require(0 <= pos && pos < out.size)
       ghostExpr({
         val n = out.size
-        assert(BigInt(n) == out.toList.size)
         datastructure.Utils.compareIntPreservedByToBigInt(pos, n)
-        assert(BigInt(pos) < BigInt(n))
-        datastructure.Utils.compareIntPreservedByToBigInt(pos, 0)
-        assert(BigInt(0) <= BigInt(pos))
         assert(BigInt(pos) < out.toList.size)
         datastructure.Utils.additionIntPreservedByToBigInt(pos, 1)
         ListLemmas.lemmaUpdatedTakeSnoc(out.toList, BigInt(pos), b)
@@ -142,7 +138,6 @@ object PocketImperative {
         writeBit(out, pos, bit)
         writeBitsFrom(out, pos + 1, rest, k - 1, half >>> 1)
       } else {
-        ghostExpr(lemmaEncodeNBitsLast(rem, k, half))
         writeBit(out, pos, bit)
       }
     }.ensuring(_ => out.valid && out.size == old(out).size &&
@@ -153,10 +148,7 @@ object PocketImperative {
       StaticChecks.require(out.valid)
       require(1 <= n && n <= 30 && 0 <= pos && pos <= out.size - n && 0 <= value)
       StaticChecks.require(BigInt(value) < pow2(BigInt(n)))
-      ghostExpr({
-        lemmaShiftIsPow2(n - 1)
-        datastructure.Utils.subtractionIntPreservedByToBigInt(n, 1)
-      })
+      ghostExpr(lemmaShiftIsPow2(n - 1))
       writeBitsFrom(out, pos, value, n, 1 << (n - 1))
     }.ensuring(_ => out.valid && out.size == old(out).size &&
       prefix(out, pos + n) == prefix(old(out), pos) ++ encodeNBits(BigInt(value), BigInt(n), pow2(BigInt(n))))
@@ -164,20 +156,6 @@ object PocketImperative {
     /** floor(log2(n)) for 32 <= n <= MaxF, by comparisons as in the specification: no division and no loop. */
     def log2Floor(n: Int): Int = {
       require(32 <= n && n <= Layout.MaxF)
-      ghostExpr({
-        datastructure.Utils.compareIntPreservedByToBigInt(n, 32)
-        datastructure.Utils.compareIntPreservedByToBigInt(n, 63)
-        datastructure.Utils.compareIntPreservedByToBigInt(n, 127)
-        datastructure.Utils.compareIntPreservedByToBigInt(n, 255)
-        datastructure.Utils.compareIntPreservedByToBigInt(n, 511)
-        datastructure.Utils.compareIntPreservedByToBigInt(n, 1023)
-        datastructure.Utils.compareIntPreservedByToBigInt(n, 2047)
-        datastructure.Utils.compareIntPreservedByToBigInt(n, 4095)
-        datastructure.Utils.compareIntPreservedByToBigInt(n, 8191)
-        datastructure.Utils.compareIntPreservedByToBigInt(n, 16383)
-        datastructure.Utils.compareIntPreservedByToBigInt(n, 32767)
-        datastructure.Utils.compareIntPreservedByToBigInt(n, 65535)
-      })
       if (n <= 63) 5
       else if (n <= 127) 6
       else if (n <= 255) 7
@@ -201,20 +179,8 @@ object PocketImperative {
     @ghost @opaque @inlineOnce
     def lemmaCountEncodeLarge(a: Int): Unit = {
       require(34 <= a && a <= Layout.MaxF)
-      val v = a - 2
-      val l = log2Floor(v)
-      val e = countWidth(a)
-      datastructure.Utils.compareIntPreservedByToBigInt(a, 33)
-      datastructure.Utils.compareIntPreservedByToBigInt(a, 65535)
-      datastructure.Utils.subtractionIntPreservedByToBigInt(a, 2)
-      assert(BigInt(v) == BigInt(a) - 2)
-      datastructure.Utils.additionIntPreservedByToBigInt(l, l)
-      datastructure.Utils.subtractionIntPreservedByToBigInt(l + l, 4)
-      assert(e == l + l - 4)
-      assert(BigInt(e) == 2 * BigInt(l) - 4)
-      assert(BigInt(e) == countE(BigInt(v)))
-      assert(pow2Fast(BigInt(e)) == pow2(BigInt(e)))
-      assert(BigInt(v) < pow2Fast(countE(BigInt(v))))
+      assert(BigInt(countWidth(a)) == countE(BigInt(a - 2)))
+      assert(BigInt(a - 2) < pow2Fast(countE(BigInt(a - 2))))
       lemmaCountPrefix()
     }.ensuring(_ => BigInt(7) < pow2(BigInt(3)) && BigInt(a - 2) < pow2(BigInt(countWidth(a))) &&
       countEncode(BigInt(a)) == encodeNBits(BigInt(7), BigInt(3), pow2(BigInt(3))) ++ encodeNBits(BigInt(a - 2), BigInt(countWidth(a)), pow2(BigInt(countWidth(a)))))
@@ -264,12 +230,6 @@ object PocketImperative {
     @ghost @opaque @inlineOnce
     def lemmaScanBounds(n: Int, run: Int, size: Int): Unit = {
       require(0 <= n && n <= size && size <= Layout.MaxF && 0 <= run && run <= size - n)
-      datastructure.Utils.compareIntPreservedByToBigInt(run, 0)
-      datastructure.Utils.compareIntPreservedByToBigInt(n, 0)
-      datastructure.Utils.compareIntPreservedByToBigInt(run, 65535)
-      datastructure.Utils.compareIntPreservedByToBigInt(n, 65535)
-      datastructure.Utils.additionIntPreservedByToBigInt(run, n)
-      datastructure.Utils.compareIntPreservedByToBigInt(run + n, 65535)
     }.ensuring(_ => BigInt(0) <= BigInt(run) && BigInt(0) <= BigInt(n) && BigInt(run) + BigInt(n) <= MAX_F)
 
     /** What is left to write of a run-length encoding when the bits n - 1 down to 0 of x are still to be scanned
@@ -289,9 +249,6 @@ object PocketImperative {
       val size = x.size
       assert(BigInt(size) == x.toList.size)
       datastructure.Utils.compareIntPreservedByToBigInt(i, size)
-      assert(BigInt(i) < BigInt(size))
-      datastructure.Utils.compareIntPreservedByToBigInt(i, 0)
-      assert(BigInt(0) <= BigInt(i))
       datastructure.Utils.additionIntPreservedByToBigInt(i, 1)
       ListLemmas.lemmaTakeReverseCons(x.toList, BigInt(i))
       unfold(prefix(x, i))
@@ -303,7 +260,6 @@ object PocketImperative {
     def lemmaPendingZero(x: BitArray, n: Int, run: Int): Unit = {
       require(x.valid && 1 <= n && n <= x.size && x.size <= Layout.MaxF && 0 <= run && run <= x.size - n)
       require(!x(n - 1))
-      lemmaScanBounds(n, run, x.size)
       lemmaPrefixReverseCons(x, n - 1)
       datastructure.Utils.additionIntPreservedByToBigInt(run, 1)
       lemmaZerosThenZero(BigInt(run), prefix(x, n - 1).reverse)
@@ -317,14 +273,11 @@ object PocketImperative {
       require(x.valid && 1 <= n && n <= x.size && x.size <= Layout.MaxF && 0 <= run && run <= x.size - n)
       require(x(n - 1))
       lemmaScanBounds(n, run, x.size)
-      lemmaScanBounds(n - 1, 0, x.size)
       lemmaPrefixReverseCons(x, n - 1)
       datastructure.Utils.additionIntPreservedByToBigInt(run, 1)
       datastructure.Utils.subtractionIntPreservedByToBigInt(n, 1)
       val rest = prefix(x, n - 1).reverse
-      assert(rest.size == BigInt(n) - 1)
       lemmaRunLengthEncodeZerosThenOne(BigInt(run), rest)
-      assert(List.fill(BigInt(0))(ZERO) ++ rest == rest)
       unfold(pendingRunLength(x, n, run))
       unfold(pendingRunLength(x, n - 1, 0))
     }.ensuring(_ => pendingRunLength(x, n, run) == countEncode(BigInt(run + 1)) ++ pendingRunLength(x, n - 1, 0))
@@ -334,13 +287,8 @@ object PocketImperative {
     @ghost @opaque @inlineOnce
     def lemmaPendingEnd(x: BitArray, run: Int): Unit = {
       require(x.valid && x.size <= Layout.MaxF && 0 <= run && run <= x.size)
-      lemmaScanBounds(0, run, x.size)
-      unfold(prefix(x, 0))
       assert(prefix(x, 0).reverse == Nil[Boolean]())
-      ListSpecs.rightUnitAppend(List.fill(BigInt(run))(ZERO))
-      lemmaRunLengthEncodeZeros(BigInt(run))
       unfold(pendingRunLength(x, 0, run))
-      assert(List(ONE, ZERO) == List(ONE) ++ List(ZERO))
     }.ensuring(_ => pendingRunLength(x, 0, run) == List(ONE) ++ List(ZERO))
 
     /** Before the scan, everything is pending: the encoding of x read from its last bit to its first. */
@@ -348,12 +296,10 @@ object PocketImperative {
     def lemmaPendingAll(x: BitArray): Unit = {
       require(x.valid && x.size <= Layout.MaxF)
       val size = x.size
-      assert(BigInt(size) == x.toList.size)
       ListSpecs.appendTakeDrop(x.toList, Nil[Boolean](), BigInt(size))
       ListSpecs.rightUnitAppend(x.toList)
       unfold(prefix(x, size))
       assert(prefix(x, size) == x.toList)
-      assert(List.fill(BigInt(0))(ZERO) ++ x.toList.reverse == x.toList.reverse)
       unfold(pendingRunLength(x, size, 0))
     }.ensuring(_ => pendingRunLength(x, x.size, 0) == runLengthEncode(x.toList.reverse))
 
