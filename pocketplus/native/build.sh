@@ -53,7 +53,7 @@ warn="-Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wpointer-
 cc="${CC:-cc}"
 
 # -Wmissing-variable-declarations is to globals what -Wmissing-prototypes is to functions: each must
-# be `static` or declared in a header. It holds since Stainless 0.10.4, where GenC emits the Scala
+# be `static` or declared in a header. It holds since Stainless 0.10.5, where GenC emits the Scala
 # constants as `static const` instead of exported globals. clang has the flag, gcc only from version
 # 14, and gcc rejects a -W option it does not know, so it is added when the compiler accepts it.
 if $cc -Wmissing-variable-declarations -fsyntax-only -x c /dev/null >/dev/null 2>&1; then
