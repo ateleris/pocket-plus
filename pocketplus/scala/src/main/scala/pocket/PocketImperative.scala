@@ -333,13 +333,13 @@ object PocketImperative {
         ghostExpr(lemmaPendingZero(x, n, run))
         writeRunLengthFrom(x, n - 1, run + 1, out, pos)
       }
-    }.ensuring(res => out.valid && out.size == old(out).size && (res == Errors.ErrCapacity || (
+    }.ensuring(res => x.valid && x.toList == old(x).toList && out.valid && out.size == old(out).size && (res == Errors.ErrCapacity || (
       pos < res && res <= out.size && prefix(out, res) == prefix(old(out), pos) ++ pendingRunLength(x, n, run))))
 
     /** Writes from position pos the run-length encoding (blue book 5.2.3) of x read from its last bit to its first,
       * which is the order in which the encoder applies it to X_t and to the mask changes (5.3.2). Returns the
       * position after it, or Errors.ErrCapacity if it does not fit in out, which may then have been written anywhere
-      * from pos on.
+      * from pos on. x is left unchanged.
       *
       * Exported for now only so that the generated C of the basic encoding functions shows in the diffs: nothing
       * calls it from C, and the export goes away once encodeStep uses it. */
@@ -349,7 +349,7 @@ object PocketImperative {
       require(x.size <= Layout.MaxF && 0 <= pos && pos <= out.size)
       ghostExpr(lemmaPendingAll(x))
       writeRunLengthFrom(x, x.size, 0, out, pos)
-    }.ensuring(res => out.valid && out.size == old(out).size && (res == Errors.ErrCapacity || (
+    }.ensuring(res => x.valid && x.toList == old(x).toList && out.valid && out.size == old(out).size && (res == Errors.ErrCapacity || (
       pos < res && res <= out.size && prefix(out, res) == prefix(old(out), pos) ++ runLengthEncode(x.toList.reverse))))
   }
 
