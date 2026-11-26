@@ -12,6 +12,7 @@ import os
 import pytest
 
 import pocketplus
+from test_roundtrip import STUB_STEPS
 
 _DATA_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
@@ -37,6 +38,7 @@ def _parse(path):
     return f, vectors
 
 
+@STUB_STEPS
 @pytest.mark.skipif(not _FILES, reason="no data/*.vectors files present (private)")
 @pytest.mark.parametrize("path", _FILES, ids=[os.path.basename(p) for p in _FILES])
 @pytest.mark.parametrize("rob", [0, 3, 7])

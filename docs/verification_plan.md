@@ -46,8 +46,8 @@ The core is written twice, in two subsets of Scala that Stainless verifies:
 | | Functional specification | Imperative implementation |
 |---|---|---|
 | State | immutable record passed to and returned by each step | caller-allocated struct mutated in place (the context object of R-PERF-07) |
-| Integers | unbounded `BigInt` | bounded `BigInt`, compiled to 32-bit machine integers in C, absence of overflows checked by Stainless |
-| Bit vectors | singly linked lists of booleans, MSB first; bits are `Boolean`s; induction is the main proof tool | packed machine words with explicit bit lengths; bits are machine bits |
+| Integers | unbounded `BigInt` | 32-bit `Int` and `UByte` bytes, compiled to `int32_t` and `uint8_t` in C; absence of overflows checked by Stainless (`strict-arithmetic`) |
+| Bit vectors | singly linked lists of booleans, MSB first; bits are `Boolean`s; induction is the main proof tool | packed `UByte` bytes with explicit bit lengths; bits are machine bits |
 | Step | pure function `(state, input, flags) → (output, state')` | procedure writing into a caller-provided output buffer and updating the state in place |
 | History | what the definitions need: the last 15 change vectors and new-mask flags (enough for any R_t), exact `t` | 8 change vectors and a zero-run counter, 15 flag bits, saturating `t` (green book table 5-1) |
 | Control flow | recursion over lists | loops with invariants, no recursion |
@@ -166,6 +166,137 @@ object Decoder {
 ```
 
 ## Imperative Implementation
+
+The imperative core is `PocketImperative.scala`, next to the specification, in the GenC-compatible imperative subset of Stainless. Bit vectors and bit streams are `BitArray`s (`datastructure/arrays/BitArray.scala`): bits packed MSB first into unsigned bytes (`UByte` from `stainless.math.Unsigned`, `uint8_t` in the generated C), with the list of booleans they stand for carried as ghost state. Every buffer is allocated by the caller and lives in the state struct or is passed to the call, and every step returns a bit count or a negative error code (R-PERF-04, R-PERF-07). The file currently sets the state layout and the entry points of the C API, with the init functions implemented and the step bodies stubbed until the refinement is carried out. The C shim allocates the state buffers once per stream and checks the arguments of each call before passing them on, so the preconditions of the entry points hold on every call. GenC emits them as `assert`s, except the ones on ghost state (the validity of a `BitArray`, written with `StaticChecks.require`), which the shim establishes when it builds the bit arrays. The imperative code is tested as generated C: through the C API on the test vectors, and cross-validated against the specification, which keeps its JVM tests.
+
+### States
+
+The encoder state follows green book table 5-1 (see the _History_ row of the comparison table above); the decoder state follows green book 3.3.2, with F fixed at creation (see `docs/questions.md`). Both classes follow the structure of `CompressionState`: a separate invariant function, called from the class `require`, and a ghost `lemmaInvariant` restating it for the prover. The invariant functions are ghost here, since they state the validity of the bit arrays, so the class uses `StaticChecks.require`.
+
+```scala
+case class EncoderState(
+    f: Int,
+    var t: Int,                        // saturating at Layout.TSaturation
+    lastInput: BitArray,               // I_{t-1}
+    mask: BitArray,                    // M_{t-1}
+    build: BitArray,                   // B_{t-1}
+    changeHistory: BitArray,           // D_{t-1} .. D_{t-7}: ring buffer of HistoryVectors slots of Layout.bitsPerSlot(f) bits, newest at historyHead
+    changeHistoryZero: Array[Boolean], // per slot: the stored vector is all zero (Z_t of green book 5.3.1.2)
+    var historyHead: Int,
+    var zeroRunBeyond: Int,            // consecutive all-zero D older than the stored ones, saturating at 8
+    var newMaskHistory: Int,           // p_{t-1} .. p_{t-15} in the low 15 bits
+    xt: BitArray,                      // scratch: X_t
+    yt: BitArray                       // scratch: y_t and bit extractions
+) {
+  StaticChecks.require(encoderInvariant(f, t, lastInput, mask, build, changeHistory, changeHistoryZero, historyHead, zeroRunBeyond, newMaskHistory, xt, yt))
+  ...
+}
+```
+
+Body of `encoderInvariant`:
+
+```scala
+1 <= f && f <= Layout.MaxF &&
+0 <= t && t <= Layout.TSaturation &&
+lastInput.valid && lastInput.size == f &&
+mask.valid && mask.size == f &&
+build.valid && build.size == f &&
+changeHistory.valid && changeHistory.size == Layout.HistoryVectors * Layout.bitsPerSlot(f) &&
+changeHistoryZero.length == Layout.HistoryVectors &&
+0 <= historyHead && historyHead < Layout.HistoryVectors &&
+0 <= zeroRunBeyond && zeroRunBeyond <= 8 &&
+0 <= newMaskHistory && newMaskHistory < 32768 &&
+xt.valid && xt.size == f &&
+yt.valid && yt.size == f
+```
+
+`Layout.bitsPerSlot(f)` is `8 * bytesPerVector(f)`: a slot of the change history is a vector padded to whole bytes, so that every slot starts on a byte boundary.
+
+```scala
+case class DecoderState(
+    f: Int,
+    var t: Int,                        // saturating at Layout.TSaturation
+    lastInput: BitArray,               // I_{t-1}
+    mask: BitArray,                    // M_{t-1}
+    var unknownMasks: Int,             // L^M_t, saturating at Layout.LossSaturation
+    var unknownInputs: Int,            // L^I_t, saturating at Layout.LossSaturation
+    xt: BitArray,                      // scratch: X_t
+    sentMask: BitArray                 // scratch: mask from q_t, kept apart until the checks pass (green book 3.3.3.2)
+) {
+  StaticChecks.require(decoderInvariant(f, t, lastInput, mask, unknownMasks, unknownInputs, xt, sentMask))
+  ...
+}
+```
+
+Body of `decoderInvariant`:
+
+```scala
+1 <= f && f <= Layout.MaxF &&
+0 <= t && t <= Layout.TSaturation &&
+lastInput.valid && lastInput.size == f &&
+mask.valid && mask.size == f &&
+0 <= unknownMasks && unknownMasks <= Layout.LossSaturation &&
+0 <= unknownInputs && unknownInputs <= Layout.LossSaturation &&
+xt.valid && xt.size == f &&
+sentMask.valid && sentMask.size == f
+```
+
+#### Correspondence with the functional states
+
+The tables below give the simulation relation field by field. A bit vector `v` of F bits is a `BitArray` packed MSB first into `bytesPerVector(F)` bytes; `toList(v)` denotes its ghost list `v.toList`, the F booleans in order, a ghost projection computed from the bytes (`BitArray.bitsFrom`). The unused low bits of the last byte are not part of the list. The relation is not a function: a `t` past the saturation point and the contents of change vectors older than the seventh cannot be recovered from the imperative state.
+
+Encoder, `CompressionState` against `EncoderState`:
+
+| Functional field | Imperative field | Relation |
+|---|---|---|
+| `t: BigInt`, exact | `t: Int`, saturating at 16 | `min(t, 16)` agree; the definitions only read `t == 0`, `t <= R_t` and `min(t, 15)` |
+| `f: BigInt` | `f: Int` | equal |
+| `m0: List[Boolean]` | none | only used at t = 0, where `toList(mask) == m0`; not needed afterwards |
+| `pts: List[Boolean]`, previous new-mask flags over the R_t + C_t window | `newMaskHistory: Int`, p_(t-1) .. p_(t-15) in 15 bits | `pts` is a prefix of the 15 bits read newest first |
+| `ct: BigInt`, C_t | derived from `changeHistoryZero` and `zeroRunBeyond` | `ct == dts.drop(R_t).takeWhile(isAllZero).size`, computed as the zero flags of the stored slots past the first R_t, plus `zeroRunBeyond` when all of those are zero, capped at `min(t, 15) - R_t` |
+| `itMinusOne`, `btMinusOne`, `mtMinusOne: List[Boolean]` | `lastInput`, `mask`, `build: BitArray` | `toList(lastInput) == itMinusOne`, and likewise for the other two |
+| `dts: List[List[Boolean]]`, the last `min(t, 15)` change vectors, newest first | `changeHistory` (one `BitArray` of 7 slots, ring buffer, newest at `historyHead`), `changeHistoryZero` (7 flags), `zeroRunBeyond` (saturating at 8) | slot `(historyHead - k) mod 7`, the F bits from bit `slot * bitsPerSlot(f)`, holds `dts(k)` for `k < min(7, dts.size)`; `changeHistoryZero(slot) == isAllZero(dts(k))`; `zeroRunBeyond == min(8, dts.drop(7).takeWhile(isAllZero).size)`; the contents of `dts(7..)` are otherwise forgotten |
+| none | `xt`, `yt: BitArray` | scratch, unconstrained |
+
+R_t and the flags p_t, f_t, r_t are inputs of the step on both sides and appear in neither state. The history above serves any R_t in 0..7: X_t reads at most the 7 stored vectors, and C_t only needs their zero flags and `zeroRunBeyond`.
+
+Decoder, `DecompressionState` against `DecoderState`:
+
+| Functional field | Imperative field | Relation |
+|---|---|---|
+| `t: BigInt`, exact | `t: Int`, saturating at 16 | `min(t, 16)` agree |
+| `f: BigInt` | `f: Int` | equal |
+| `itMinusOne`, `mtMinusOne: List[Boolean]` | `lastInput`, `mask: BitArray` | `toList(lastInput) == itMinusOne`, `toList(mask) == mtMinusOne` |
+| none | `unknownMasks`, `unknownInputs: Int` | loss counters of green book 3.3.2, for the tested-only robustness and recovery features; both zero whenever `inSync` holds |
+| none | `xt`, `sentMask: BitArray` | scratch, unconstrained |
+
+### Entry points
+
+Each entry point below is one clause of the _Refinement_ property. R_t and the flags are passed per call, as in the functional `Encoder.step` and in the C API. The init functions start (or restart) a stream: `encoderInit(st, m0)` lands in a state related to the functional state at t = 0 with initial mask `m0`, and `decoderInit(st)` in one related to the decoder state at t = 0. Their names carry the encoder or decoder prefix because GenC drops the enclosing object from C names.
+
+```scala
+object EncoderMut {
+  def encoderInit(st: EncoderState, initialMask: BitArray): Unit
+  def encodeStep(
+      st: EncoderState,
+      input: BitArray,
+      newMaskFlag: Boolean,
+      sendMaskFlag: Boolean,
+      uncompressedFlag: Boolean,
+      robustnessT: Int,
+      out: BitArray
+  ): Int
+}
+```
+
+```scala
+object DecoderMut {
+  def decoderInit(st: DecoderState): Unit
+  def decodeStep(st: DecoderState, packet: BitArray, out: BitArray): Int
+}
+```
+
+Buffers carry their own size in bits: the size of `out` in `encodeStep` is the capacity the call may write, and the size of `packet` in `decodeStep` is the number of bits received. `decodeStep` returns the number of bits it consumed, so the caller can tell o_t from what follows it. On the packet path the transport delimits packets in octets (D2 F-04), the leftover is the 0 to 7 padding bits that the caller checks (green book 3.3.6 a to c), and in a file it is the next vector. The functional `Decoder.step` currently receives exactly o_t; aligning it with this signature is the open question in `docs/questions.md`.
 
 ## Properties
 
