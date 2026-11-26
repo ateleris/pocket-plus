@@ -1,0 +1,7 @@
+name       = "scala-identity"
+language   = "Scala"
+# Only for the Scala compiler of its Stainless install.
+source     = "../pocketplus"
+build      = "make SOURCE={source}"
+entrypoint = "build/adapter"
+example    = true

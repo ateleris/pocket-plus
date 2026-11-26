@@ -128,6 +128,10 @@ def validate(
     verbose: Annotated[
         bool, typer.Option("--verbose", "-v", help="List every selected impl and dataset.")
     ] = False,
+    summary: Annotated[
+        Path | None,
+        typer.Option(help="Append a markdown summary to this file, e.g. $GITHUB_STEP_SUMMARY."),
+    ] = None,
 ):
     """Run round-trip, reference-vector and cross-impl checks via the contract."""
     pb = _load(config)
@@ -149,6 +153,9 @@ def validate(
         mark = "[green]PASS[/green]" if r.passed else "[red]FAIL[/red]"
         table.add_row(r.impl, r.dataset, r.check, mark, r.detail)
     console.print(table)
+    if summary is not None:
+        with summary.open("a") as fh:
+            fh.write(report.validation_markdown(run.results))
 
     failures = [r for r in run.results if not r.passed]
     total = len(run.results)

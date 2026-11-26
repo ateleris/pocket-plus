@@ -25,6 +25,7 @@ pocketbench/
     common/            # NOT an adapter (no adapter.toml, so discovery skips it): shared plumbing
       c/               #   adapter_common.{h,c}   - used by reference-c, reference-cpp, pocketplus
       rust/            #   pocketbench-adapter/   - used by pocketrust-u32, pocketrust-u64
+      scala/           #   Plumbing.scala, build.sh - used by pocketplus-scala
     mock/              # self-contained identity codec: the worked example for an interpreted impl
       adapter.toml
       adapter.py
@@ -36,6 +37,7 @@ pocketbench/
     pocketrust-u32/    # adapter.toml only: builds ../pocketrust with --features block32
     pocketrust-u64/    # adapter.toml only: builds ../pocketrust with --features block64
     pocketplus/        # C wrapper over the Stainless GenC output and its pp_* shim
+    pocketplus-scala/  # JVM wrapper over pocketplus's functional specification (PocketExecSpec)
 ```
 
 Only the adapters are committed, and the codecs live entirely outside this repo so that no second
@@ -133,6 +135,13 @@ by this codec's API", returned without calling the codec when its API cannot tak
 its types cannot hold, a field of the wrong length). A codec without a concept (packet loss, unknown
 F) implements the hook honestly and fails the cases that need it.
 
+The one exception is pocketplus-scala: the specification's preconditions are proven by Stainless,
+not checked at run time, so its adapter refuses input outside them (R_t > 7, f_t or r_t cleared
+while t <= R_t) as not representable. Every other codec must handle such input itself.
+`tests/test_malformed_input.py` feeds every adapter invalid flags, an invalid F, and truncated,
+overlong, bit-flipped and random packets, and accepts only a codec error or a decode status: never
+a crash, a hang or a malformed output.
+
 ## The shared plumbing
 
 `adapters/common/` is not an adapter (it has no `adapter.toml`, so discovery skips it). It holds the
@@ -142,11 +151,15 @@ contract once per language, and the compiled adapters supply only per-packet hoo
 |---|---|---|
 | `common/c/adapter_common.{h,c}` | reference-c, reference-cpp, pocketplus | a `pb_adapter`: two report strings + `enc_create` / `enc_packet` / `enc_destroy` / `dec_create` / `dec_packet` / `dec_lost` / `dec_trailer_f` / `dec_destroy` |
 | `common/rust/pocketbench-adapter/` | pocketrust-u32, pocketrust-u64 | an `impl Codec` with the same hooks |
+| `common/scala/Plumbing.scala` | pocketplus-scala | a `Codec` object with the same hooks, hook errors thrown as `HookError` |
 
 The plumbing owns flag parsing, the container, the warmup + timed loop (per iteration: create,
-every packet, destroy), output sizing and the summary. `adapters/mock/adapter.py` is the third,
-Python, copy; `tests/test_plumbing.py` runs the same behaviours against all three through identity
-fixtures (`tests/fixtures/adapters/{c,rust}-identity`), so the copies cannot drift.
+every packet, destroy), output sizing and the summary. `adapters/mock/adapter.py` is the Python
+copy; `tests/test_plumbing.py` runs the same behaviours against all four through identity fixtures
+(`tests/fixtures/adapters/{c,rust,scala}-identity`), so the copies cannot drift. The Scala copy is
+compiled by `common/scala/build.sh` with the Scala compiler bundled in the Stainless jar that
+`pocketplus/install.sh` installs, so it needs Java but neither sbt nor a separate Scala install;
+`scala-identity` skips when that install is absent.
 
 ## Discovery and the two presence gates
 
@@ -200,7 +213,7 @@ entrypoint  = "adapter.py"
 ```
 
 `adapters/mock/adapter.py` is an identity codec plus the Python copy of the plumbing: the same
-strict flags, container, timed loop and summary as the C and Rust copies.
+strict flags, container, timed loop and summary as the C, Rust and Scala copies.
 
 ## Adding an implementation (step by step)
 

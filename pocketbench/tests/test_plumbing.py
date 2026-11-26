@@ -13,12 +13,12 @@ from pathlib import Path
 import pytest
 
 from pocketbench import adapter, records
-from pocketbench.adapter.discovery import DiscoveredAdapter, discover_adapters
+from pocketbench.adapter.discovery import DiscoveredAdapter, discover_adapters, source_present
 from pocketbench.records import Container, Record
 from tests.adapter_contract import assert_rejects_contract_violations
 
 REPO = Path(__file__).resolve().parents[1]
-NAMES = ["mock", "c-identity", "rust-identity"]
+NAMES = ["mock", "c-identity", "rust-identity", "scala-identity"]
 NOT_REPRESENTABLE = "input not representable by this codec's API"
 
 _BUILT: dict[str, DiscoveredAdapter] = {}
@@ -31,6 +31,8 @@ def _adapter(name: str) -> DiscoveredAdapter:
             REPO / "tests" / "fixtures" / "adapters", repo_root=REPO, variables={}
         )
         (d,) = [a for a in found if a.manifest.name == name]
+        if not source_present(d):
+            pytest.skip(f"{name}: source not present at {d.error or d.resolved_source}")
         result = adapter.build(d)
         assert result.ok, f"{name} build failed:\n{result.stderr}"
         _BUILT[name] = d

@@ -1,7 +1,8 @@
 """Persist and present benchmark results.
 
 Renders the ccsds124-style benchmark output: console tables, a ``BENCHMARK.md`` replica, and a
-machine-readable JSON record. Chart and HTML rendering is stubbed.
+machine-readable JSON record, plus the validate summary for a CI job page. Chart and HTML
+rendering is stubbed.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from rich.table import Table
 from rich.text import Text
 
 from pocketbench.benchmark import MIN_BUDGET_ITERATIONS, BenchMetrics, BuildInfo
+from pocketbench.validate import ValidationResult
 
 _OPERATIONS = ("compress", "decompress")
 _COLUMNS = (
@@ -433,3 +435,38 @@ def render_charts(results: dict, results_dir: Path) -> list[Path]:
 
 def render_html(results: dict, results_dir: Path) -> Path:
     raise NotImplementedError("report.render_html: implemented in a later increment")
+
+
+def _md_cell(text: str) -> str:
+    return text.replace("|", "\\|").replace("\n", " ")
+
+
+def validation_markdown(results: list[ValidationResult]) -> str:
+    """A dataset x implementation matrix of validate results, for a CI job summary."""
+    failed = [r for r in results if not r.passed]
+    impls = list(dict.fromkeys(r.impl for r in results if r.impl != "*"))
+    datasets = list(dict.fromkeys(r.dataset for r in results))
+    columns = impls + (["cross-impl"] if any(r.impl == "*" for r in results) else [])
+    cells: dict[tuple[str, str], list[ValidationResult]] = {}
+    for r in results:
+        cells.setdefault((r.dataset, "cross-impl" if r.impl == "*" else r.impl), []).append(r)
+    lines = [
+        f"### Validation: {len(results) - len(failed)} of {len(results)} checks passed",
+        "",
+        "| Dataset | " + " | ".join(columns) + " |",
+        "|---" * (len(columns) + 1) + "|",
+    ]
+    for ds in datasets:
+        row = []
+        for col in columns:
+            checks = cells.get((ds, col), [])
+            bad = [r for r in checks if not r.passed]
+            if not checks:
+                row.append("-")
+            elif bad:
+                row.append("**FAIL** " + "; ".join(
+                    _md_cell(f"{r.check}: {r.detail}" if r.detail else r.check) for r in bad))
+            else:
+                row.append("pass")
+        lines.append(f"| {ds} | " + " | ".join(row) + " |")
+    return "\n".join(lines) + "\n"

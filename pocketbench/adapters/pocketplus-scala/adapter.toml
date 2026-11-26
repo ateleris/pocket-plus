@@ -1,0 +1,6 @@
+name        = "pocketplus-scala"
+language    = "Scala (pocketplus functional specification, JVM)"
+source      = "../pocketplus"
+build       = "make SOURCE={source}"
+entrypoint  = "build/adapter"
+version_cmd = "java --version"
