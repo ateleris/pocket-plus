@@ -1908,6 +1908,7 @@ object ListUtils {
     ListSpecs.appendAssoc(a ++ b ++ c, d, e ++ (f ++ (g ++ h)))
     ListSpecs.appendAssoc(a ++ b, c, d ++ (e ++ (f ++ (g ++ h))))
     ListSpecs.appendAssoc(a, b, c ++ (d ++ (e ++ (f ++ (g ++ h)))))
+    ()
   }.ensuring(_ => a ++ b ++ c ++ d ++ e ++ f ++ g ++ h == a ++ (b ++ (c ++ (d ++ (e ++ (f ++ (g ++ h)))))))
 
   @ghost @inlineOnce @opaque
