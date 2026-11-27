@@ -1,15 +1,8 @@
 #!/usr/bin/env bash
 # Dev-container bootstrap: the one-time steps from README "Build / test
-# (macOS / Linux)" — fetch the Stainless toolchain and create the Python venv.
+# (macOS / Linux)" — create the Python venv. (Stainless comes from Maven Central, through sbt.)
 set -euo pipefail
 cd "$(dirname "$0")/../pocketplus"
-
-# Stainless jar + z3/cvc5 solvers (git-ignored; version pinned in install.sh).
-# The "linux" build's solver binaries are x86_64; on an Apple Silicon host
-# Docker Desktop's Rosetta emulation covers them.
-if ! ls tools/stainless/lib/stainless-dotty-standalone-*.jar >/dev/null 2>&1; then
-    ./install.sh linux
-fi
 
 # Python venv + test dependencies (python/env is git-ignored).
 if [ ! -d python/env ]; then

@@ -8,19 +8,17 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(dirname "$here")"
 
-jar="$(echo "$repo"/tools/stainless/lib/stainless-dotty-standalone-*.jar)"
-[ -f "$jar" ] || { echo "Stainless jar not found; run ./install.sh first." >&2; exit 1; }
+command -v sbt >/dev/null || { echo "sbt not found on PATH; GenC runs through the sbt project in scala/." >&2; exit 1; }
 
 scala_dir="$repo/scala/src/main/scala/pocket"
-# What GenC compiles: the codec, and the bit array it stores its vectors in. Keep this list in sync
-# with build/Stainless.props.
+# What GenC compiles (gencSources in scala/build.sbt), to know when pocketplus.c is stale. Keep this
+# list in sync with build.sbt and build/Stainless.props.
 scala_srcs=(
   "$scala_dir/PocketImperative.scala"
   "$scala_dir/datastructure/arrays/BitArray.scala"
   "$scala_dir/datastructure/Utils.scala"
 )
 genc_c="$here/generated/pocketplus.c"
-jvm_args="-Xss512m --sun-misc-unsafe-memory-access=allow"
 
 stale=0
 [ -f "$genc_c" ] || stale=1
@@ -29,7 +27,9 @@ for src in "${scala_srcs[@]}"; do
 done
 if [ "$stale" = 1 ]; then
   echo "[GenC] PocketImperative.scala -> pocketplus.c"
-  (cd "$repo" && java $jvm_args -jar "$jar" --config-file=false --genc --skip-verification --genc-output="$genc_c" "${scala_srcs[@]}")
+  # The genc task of scala/build.sbt runs Stainless from its Maven Central JAR, and writes
+  # native/generated/pocketplus.{c,h}
+  (cd "$repo/scala" && sbt --batch genc)
   [ -f "$genc_c" ] || { echo "GenC did not produce $genc_c" >&2; exit 1; }
 fi
 

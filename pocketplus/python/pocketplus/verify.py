@@ -1,17 +1,20 @@
-"""Run Stainless formal verification on the scala files whose paths are given in this script and report the VC results.
+"""Run Stainless formal verification through the sbt project in scala/ and report the VC results.
 
 Used by the `verify`-marked pytest test (python/tests/test_verify.py); also runnable directly
 (`python -m pocketplus.verify`). Standard library only. Verification is slow, so the test that
 calls this is excluded from ordinary builds via the `verify` marker.
 
-Settings (timeout, solvers, etc.) live in scala/stainless.conf; pass extra_opts to override any
-of them for a single run (e.g. extra_opts=["--timeout=3"]).
+Stainless is the compiler plugin from Maven Central, set up in scala/build.sbt: the `verify` sbt
+project compiles the verified sources (`verifiedSources` in build.sbt) with verification on. The
+only requirements are sbt (and a JDK) on the PATH, and the z3 and cvc5 binaries, either installed
+by install_solvers.sh in tools/solvers/bin or on the PATH. Settings (timeout, solvers, etc.) live in
+scala/stainless.conf, which Stainless finds in the working directory of sbt.
 """
 from __future__ import annotations
 
-import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -19,23 +22,8 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(os.path.dirname(_HERE))  # pocketplus -> python -> repo root
 
 SCALA_DIR = os.path.join(_REPO, "scala")
-SCALA_SOURCE_FILES_DIR = os.path.join(SCALA_DIR, "src", "main", "scala", "pocket")
-STAINLESS_DIR = os.path.join(_REPO, "tools", "stainless")
-JAR = os.path.join(STAINLESS_DIR, "lib", "stainless-dotty-standalone-0.10.4.jar")
-CONFIG_FILE = os.path.join(SCALA_DIR, "stainless.conf")
-CACHE_DIR = os.path.join(_REPO, "build", ".stainless-cache")
-REPORT_JSON = os.path.join(CACHE_DIR, "report.json")
+SOLVERS_DIR = os.path.join(_REPO, "tools", "solvers", "bin")  # written by install_solvers.sh
 
-# Configuration for the stainless invocation; files to verify, JVM args
-FILES_TO_VERIFY = [
-    # os.path.join(SCALA_DIR, "PocketPlus.scala"),
-    os.path.join(SCALA_SOURCE_FILES_DIR, "PocketExecSpec.scala"),
-    os.path.join(SCALA_SOURCE_FILES_DIR, "PocketImperative.scala"),
-    os.path.join(SCALA_SOURCE_FILES_DIR, "datastructure", "arrays", "BitArray.scala"),
-    os.path.join(SCALA_SOURCE_FILES_DIR, "datastructure", "arrays", "ByteArray.scala"),
-    os.path.join(SCALA_SOURCE_FILES_DIR, "datastructure", "arrays", "IntArray.scala"),
-    os.path.join(SCALA_SOURCE_FILES_DIR, "datastructure", "Utils.scala"),
-]
 # VCs checked in parallel. Each VC runs the whole solver portfolio (z3, cvc5 and the in-process
 # Princess), so N workers mean up to 3N solver instances at once. Override with
 # POCKETPLUS_VERIFY_PARALLEL; CI sets 1: on a 4-vCPU runner, 4 workers starve Princess, the only
@@ -43,61 +31,61 @@ FILES_TO_VERIFY = [
 # time out, while 1 worker verifies everything in under 3 minutes.
 N_THREADS = int(os.environ.get("POCKETPLUS_VERIFY_PARALLEL", "4"))
 
+# Options of the JVM of sbt, in which the compiler, and so Stainless, runs. -Dparallel is read by
+# Stainless; the deep recursion of the extraction needs a big stack.
+SBT_JVM_ARGS = ["-Dparallel={}".format(N_THREADS), "-J-Xss512m",
+                "-J--sun-misc-unsafe-memory-access=allow", "-Dsbt.color=false", "-Dsbt.supershell=false"]
+# `clean` so that Stainless runs even when the sources did not change since the last compilation;
+# the VC cache (scala/.stainless-cache) still skips the VCs already proven.
+SBT_COMMANDS = ["verify/clean", "verify/compile"]
 
-JVM_ARGS = ["-Xss512m", "--sun-misc-unsafe-memory-access=allow", "-Dparallel={}".format(N_THREADS)]
+# VC statuses (in the summary table of Stainless) that count as proven, and the other ones (the
+# names of stainless.verification.VCStatus)
+_PASSING_STATUSES = {"valid", "valid from cache", "trivial"}
+_FAILING_STATUSES = {"invalid", "admitted", "unknown", "timeout", "resource limit reached",
+                     "unroll bound reached", "cancelled", "crashed", "unsupported", "external bug"}
 
-# VC statuses that count as proven; anything else (Invalid, Inconclusive) is unproven.
-_PASSING_STATUSES = {"Valid", "ValidFromCache", "Trivial"}
-
-
-def _vc_location(record: dict) -> str:
-    pos = record["pos"]
-    p = pos["begin"] if "begin" in pos else pos
-    if "file" not in p:  # e.g. {"kind": {"Unknown": {}}} for VCs Stainless can't place
-        return "<unknown position>"
-    file = os.path.relpath(p["file"], _REPO)
-    return f"{file}:{p['line']}:{p['col']}"
-
-
-def _vc_summary(record: dict) -> str:
-    status = next(iter(record["status"]))
-    detail = next(iter(record["status"].values())).get("reason", "")
-    detail = f" ({detail})" if detail else ""
-    return f"{_vc_location(record)}: {record['kind']} [{status}]{detail}"
+_TOTAL = re.compile(r"total:\s*(\d+)\s+valid:\s*(\d+).*?invalid:\s*(\d+)\s+unknown:\s*(\d+)")
+# A row of the summary table: position, function, VC kind, status, then the solver, time, etc.
+# (depending on the status), separated by 2+ spaces. The kind can contain 2+ spaces too (it may
+# quote code), so the status is found by its name.
+_ROW = re.compile(r"║\s*(\S+:\d+:\d+):\s+(.*?)\s*║")
 
 
-def run(files: list[str] | None = None, extra_opts: list[str] | None = None) -> dict:
+def _sbt() -> str:
+    # shutil.which also finds sbt.bat on Windows (through PATHEXT)
+    sbt = shutil.which("sbt")
+    if sbt is None:
+        raise FileNotFoundError("sbt not found on PATH; it runs Stainless (see scala/build.sbt)")
+    return sbt
+
+
+def _unproven(out: str) -> list[str]:
+    """The rows of the summary table whose status is not a passing one, as
+    `position: function kind [status]`."""
+    rows = []
+    for m in _ROW.finditer(out):
+        fields = re.split(r"\s{2,}", m.group(2))
+        i = next((i for i in range(2, len(fields)) if fields[i] in _PASSING_STATUSES | _FAILING_STATUSES), None)
+        if i is not None and fields[i] in _FAILING_STATUSES:
+            rows.append(f"scala/{m.group(1)}: {fields[0]} {' '.join(fields[1:i])} [{fields[i]}]")
+    return rows
+
+
+def run() -> dict:
     """Run Stainless verification; return {total, valid, invalid, unknown, output, unproven}.
 
-    `files` defaults to FILES_TO_VERIFY; `extra_opts` are appended to the Stainless command line
-    (e.g. to override a setting from stainless.conf for this run). `unproven` lists the VCs that
-    did not verify, for diagnostics. Raises FileNotFoundError if the vendored Stainless jar is
-    missing.
+    `unproven` lists the VCs that did not verify, for diagnostics. Raises FileNotFoundError if
+    sbt is not on the PATH.
     """
-    if not os.path.isfile(JAR):
-        raise FileNotFoundError(f"Vendored Stainless jar not found: {JAR}")
+    cmd = [_sbt(), "--batch", *SBT_JVM_ARGS, *SBT_COMMANDS]
+    print(f"[verify] running in {SCALA_DIR}: {' '.join(cmd)}", flush=True)
 
-    java_name = "java.exe" if os.name == "nt" else "java"
-    java = os.path.join(os.environ["JAVA_HOME"], "bin", java_name) if os.environ.get("JAVA_HOME") else "java"
-    env = dict(os.environ)
-    env["PATH"] = os.pathsep.join([
-        os.path.join(STAINLESS_DIR, "z3"),
-        os.path.join(STAINLESS_DIR, "cvc5"),
-        env.get("PATH", ""),
-    ])
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    if os.path.isfile(REPORT_JSON):
-        os.remove(REPORT_JSON)
-
-    cmd = [java, *JVM_ARGS, "-jar", JAR,
-           f"--config-file={CONFIG_FILE}", f"--cache-dir={CACHE_DIR}", f"--json={REPORT_JSON}",
-           *(extra_opts or []), *(files or FILES_TO_VERIFY)]
-    print(f"[verify] running: {' '.join(cmd)}", flush=True)
-
-    # cwd inside the (gitignored) cache dir so Stainless'/Coursier's stray "null" cache lands there.
     # Stream output live (visible under pytest with -s) while also capturing it for parsing.
-    proc = subprocess.Popen(cmd, env=env, cwd=CACHE_DIR, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True)
+    env = dict(os.environ)
+    env["PATH"] = os.pathsep.join([SOLVERS_DIR, env.get("PATH", "")])
+    proc = subprocess.Popen(cmd, cwd=SCALA_DIR, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
     captured = []
     for line in proc.stdout:
         print(line, end="", flush=True)
@@ -105,30 +93,20 @@ def run(files: list[str] | None = None, extra_opts: list[str] | None = None) -> 
     proc.wait()
     out = re.sub(r"\x1b\[[0-9;]*m", "", "".join(captured))
 
-    if not os.path.isfile(REPORT_JSON):
+    totals = _TOTAL.findall(out)
+    if not totals:  # e.g. a compilation or extraction error
         return {"total": 0, "valid": 0, "invalid": 0, "unknown": 0, "output": out, "unproven": ""}
-
-    with open(REPORT_JSON) as report_file:
-        report = json.load(report_file)
-        records = next(entry[1][0] for entry in report["stainless"] if entry[0] == "verification")
-
-        valid = sum(1 for r in records if next(iter(r["status"])) in _PASSING_STATUSES)
-        unproven_records = [r for r in records if next(iter(r["status"])) not in _PASSING_STATUSES]
-        invalid = sum(1 for r in unproven_records if next(iter(r["status"])) == "Invalid")
-        unknown = len(unproven_records) - invalid
-
-        return {"total": len(records), "valid": valid, "invalid": invalid, "unknown": unknown,
-            "output": out, "unproven": "\n".join(_vc_summary(r) for r in unproven_records)}
+    total, valid, invalid, unknown = (int(n) for n in totals[-1])
+    return {"total": total, "valid": valid, "invalid": invalid, "unknown": unknown,
+            "output": out, "unproven": "\n".join(_unproven(out))}
 
 
 def main() -> int:
-    files = [a for a in sys.argv[1:] if not a.startswith("-")] or None
-    extra_opts = [a for a in sys.argv[1:] if a.startswith("-")]
-    r = run(files=files, extra_opts=extra_opts)
+    r = run()
     print(f"[verify] total={r['total']} valid={r['valid']} invalid={r['invalid']} unknown={r['unknown']}")
     if r["total"] == 0:
         print(r["output"][-4000:])
-        print("[verify] FAILED: no Stainless summary (extraction error or crash).")
+        print("[verify] FAILED: no Stainless summary (compilation or extraction error).")
         return 2
     if r["invalid"] + r["unknown"] > 0:
         print("[verify] unproven VCs:\n" + r["unproven"])

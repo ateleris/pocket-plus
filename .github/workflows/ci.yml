@@ -12,13 +12,9 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            platform: linux
           - os: macos-latest # arm64
-            platform: mac-arm64
           - os: macos-15-intel # x86_64; label available until Aug 2027
-            platform: mac-x86
           - os: windows-latest
-            platform: win
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -35,12 +31,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install Stainless
-        if: runner.os != 'Windows'
-        run: ./install.sh ${{ matrix.platform }}
-      - name: Install Stainless (Windows)
-        if: runner.os == 'Windows'
-        run: powershell -File install.ps1
+      # sbt runs Stainless (GenC and verification), which it gets from Maven Central
+      - uses: sbt/setup-sbt@v1
 
       # C99 + -Werror lint flags live in the build scripts themselves (see native/build.sh and
       # native/pocketplus.vcxproj), so every job below is also the lint gate for its compiler:
@@ -67,6 +59,13 @@ jobs:
         run: CC=clang ./native/build.sh
 
       # Linux-only (verification is slow, and one OS gives enough signal).
+      # The verification proves some VCs only with the z3 and cvc5 binaries (`smt-z3` and
+      # `smt-cvc5` in scala/stainless.conf); the Z3 bundled in Stainless does not prove them all.
+      - name: Install z3 and cvc5
+        if: runner.os == 'Linux'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./install_solvers.sh
       - name: Run Stainless verification gate
         if: runner.os == 'Linux'
         working-directory: pocketplus/python
