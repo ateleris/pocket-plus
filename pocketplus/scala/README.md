@@ -2,8 +2,9 @@
 
 ## Setup
 
-Run `../install.sh <platform>` from the repo root once to install Stainless and the
-`sbt-stainless` plugin into this project (see `project/plugins.sbt`).
+Only sbt and a JDK are needed: `build.sbt` gets Stainless from Maven Central, as its library and
+its plugin for the Scala 3 compiler. Compiling the project (`sbt compile`, `sbt runMain ...`) does
+not verify it: the plugin only removes the ghost code there.
 
 ## Running the tests
 
@@ -45,13 +46,16 @@ intermediate bit vector, for eyeballing the packet layout against the blue book
 
 ## Stainless verification
 
-```bash
-./verify.sh
-```
 
-Runs `stainless-dotty` on `PocketExecSpec.scala` to verify the contracts/preconditions
-in the spec (uses `stainless.conf`). Pass extra Stainless flags as `$1`, e.g.
-`./verify.sh --watch`.
+Run `sbt verify/clean verify/compile`: the `verify` project of `build.sbt` compiles the verified
+sources (`verifiedSources`, the spec, the imperative codec and its data structures) with
+verification on. Stainless reads its options from `stainless.conf`.
+
+For local development, `./verify.sh` runs a `stainless` installed on the `PATH` on the same files
+instead (`./verify.sh --parallel N` checks N VCs at a time, and a Stainless option can follow).
+
+`sbt genc` translates the imperative codec to C, into `../native/generated/` (used by
+`../native/build.sh` and the Visual Studio project).
 
 ### Main interest points
 

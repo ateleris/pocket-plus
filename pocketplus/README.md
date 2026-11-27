@@ -7,8 +7,8 @@ in a small C ABI, and exercised from Python.
 ```
 scala/src/main/scala/pocket/PocketImperative.scala   the imperative codec the C is generated from (Stainless-verifiable, GenC-compatible)
 native/                  C project: GenC output + hand-written shared-library shim (pp_* API)
+tools/solvers/bin/       z3 and cvc5 for verification — downloaded by install_solvers.sh, git-ignored
 python/                  Python project: ctypes interop + pytest round-trip suite
-tools/stainless/         Stainless toolchain (jar + z3 + cvc5) — downloaded by install.sh, git-ignored
 build/                   MSBuild glue (GenC + Verify) — no shell scripts
 data/                    private test vectors (git-ignored; see data/README.md)
 ```
@@ -17,11 +17,17 @@ data/                    private test vectors (git-ignored; see data/README.md)
 
 - **Dev container** (alternative to everything below): open the repo in VS Code and *Reopen in
   Container* — `../.devcontainer/` provides JDK 25, the Scala toolchain (Coursier: `scala`, `scalac`,
-  `sbt`), clang, Python, and Claude Code, and downloads `tools/stainless` + creates the Python venv
-  on first start.
-- **Stainless toolchain**: run `./install.sh (linux|mac-arm64|mac-x86|win)` once — it downloads the
-  Stainless compiler and the z3/cvc5 solvers from GitHub releases into `tools/stainless/`.
-- **JDK** with `java` on `PATH` (only used to run Stainless).
+  `sbt`), clang, Python, and Claude Code, and creates the Python venv on first start.
+- **sbt** and a **JDK** (17 or later) on `PATH`. Stainless needs no installation: the sbt project in
+  `scala/` gets it from Maven Central (the Stainless library and the Stainless compiler plugin, with
+  the native Z3 interface; version in `scala/build.sbt`), for both verification and GenC.
+- **z3 and cvc5** (verification only): run `./install_solvers.sh [Z3_VERSION] [CVC5_VERSION]` once
+  (e.g. `./install_solvers.sh 5.4.1 1.4.2`; each version defaults to `latest`, the highest release
+  number). It downloads the binaries from their GitHub releases into `tools/solvers/bin/`, which
+  `python/pocketplus/verify.py` puts first on the `PATH` (z3 and cvc5 already on the `PATH` work
+  too). Linux, macOS, and Windows under Git Bash; needs `curl`, `unzip` and `python3`. Without these
+  binaries, Stainless falls back to the Z3 bundled in its plugin (it warns `The 'z3' binary is not
+  available`), which does not prove all the VCs: the gate then fails with a few `unknown` VCs.
 - **Python 3** on `PATH` (the test dependencies live in a virtual environment, see below).
 - **Windows only:** **Visual Studio** with the **"C++ Clang tools for Windows"** component (provides
   the `ClangCL` platform toolset — required because the GenC output uses C99 variable-length arrays
@@ -45,12 +51,12 @@ exists, then Run/Debug individual tests.
 
 **Run formal verification** as the `verify`-marked test: in Test Explorer run
 `test_stainless_all_vcs_valid` (under `python/tests/test_verify.py`), or from the CLI
-`pytest -m verify`. It runs Stainless over all VCs and **fails if any VC is invalid or unknown**
-(a strict gate). It is excluded from ordinary builds because it is slow; results are cached under
-`build/.stainless-cache`, so re-runs only re-check changed VCs. The per-VC timeout and the
-solvers are set in `scala/stainless.conf`; for a one-off run, `python -m pocketplus.verify --timeout=10`
-passes any Stainless option through. Set `POCKETPLUS_VERIFY_PARALLEL` to change how many VCs are
-checked at once (default 4; CI uses 1, see `verify.py`).
+`pytest -m verify`. It runs Stainless over all VCs (`sbt verify/clean verify/compile` in `scala/`)
+and **fails if any VC is invalid or unknown** (a strict gate). It is excluded from ordinary builds
+because it is slow; results are cached under `scala/.stainless-cache`, so re-runs only re-check
+changed VCs. The per-VC timeout and the solvers are set in `scala/stainless.conf`. Set
+`POCKETPLUS_VERIFY_PARALLEL` to change how many VCs are checked at once (default 4; CI uses 1, see
+`verify.py`).
 
 ## Build / test (command line, Windows)
 
@@ -58,6 +64,7 @@ From a *Developer Command Prompt for VS* (so `msbuild`/ClangCL are on `PATH`):
 
 ```
 msbuild pocket-plus.slnx /t:Build /p:Configuration=Debug   # GenC → DLL → pytest (no verify)
+bash install_solvers.sh                                     # once (Git Bash), z3 + cvc5 for verify
 cd python && env\Scripts\python -m pytest tests -m verify  # Stainless verification gate
 ```
 
@@ -65,7 +72,6 @@ Outside a Developer prompt (e.g. on CI), use the PowerShell scripts instead — 
 MSBuild via `vswhere` and builds only the native project (no VS Python workload needed):
 
 ```
-powershell -File install.ps1               # once, downloads tools/stainless (win build)
 powershell -File native\build.ps1          # GenC → native\x64\Release\pocketplus.dll
 python -m venv python\env && python\env\Scripts\pip install -r python\requirements.txt
 cd python && env\Scripts\python -m pytest -m "not verify"
@@ -74,9 +80,9 @@ cd python && env\Scripts\python -m pytest -m "not verify"
 ## Build / test (macOS / Linux)
 
 ```
-./install.sh mac-x86            # or mac-arm64 / linux — once, downloads tools/stainless
 ./native/build.sh               # GenC (incremental) → native/build/libpocketplus.{dylib,so}
 python3 -m venv python/env && python/env/bin/pip install -r python/requirements.txt   # once
+./install_solvers.sh            # once, z3 + cvc5 for the verification gate (latest versions)
 cd python
 env/bin/python -m pytest -m "not verify"   # interop suite
 env/bin/python -m pytest -m verify         # Stainless verification gate (slow)
@@ -109,6 +115,6 @@ env/bin/python -m pytest -m verify         # Stainless verification gate (slow)
   buffers and `int32_t`/`bool` scalars, never a struct layout.
 - The verification gate is **red by design today**: the Scala carries no verification invariants yet,
   so the array-bounds / overflow / termination VCs are unproven. It turns green as invariants are added.
-- To regenerate or verify outside VS, the same `java -jar tools/stainless/lib/...jar` invocations
-  used by `build/Stainless.targets` and `python/pocketplus/verify.py` can be run directly
-  (`python -m pocketplus.verify`).
+- To regenerate or verify outside VS, run the sbt commands that `build/Stainless.targets` and
+  `python/pocketplus/verify.py` use, from `scala/`: `sbt genc` (writes `native/generated/`) and
+  `sbt verify/clean verify/compile` (or `python -m pocketplus.verify`).

@@ -52,7 +52,7 @@ jobs:
       # No ccsds124 checkout in this job, so everything that needs it skips rather than fails: the
       # reference-* adapters resolve their `source` under ${ccsds124_root}, and the reference
       # datasets come from the same place. The mock contract tests and pocketrust still run.
-      # pocketplus needs Java + Stainless to generate its gitignored GenC source; not installed here.
+      # pocketplus needs Java + sbt (for Stainless) to generate its gitignored GenC source; not installed here.
       - name: Run framework tests
         run: uv run python -m pytest -k "not pocketplus"
 

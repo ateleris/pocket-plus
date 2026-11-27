@@ -7,7 +7,7 @@ ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
 # clang for native/build.sh (the GenC output uses C99 VLAs — same reason the
 # Windows build uses ClangCL); Python 3.12 (Ubuntu 24.04's python3) matches CI;
-# curl/unzip for install.sh.
+# curl for the Coursier launcher below.
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
     && apt-get install -y --no-install-recommends \
         clang clangd build-essential \

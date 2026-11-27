@@ -35,7 +35,7 @@
     "containerEnv": {
         "CLAUDE_CONFIG_DIR": "/home/vscode/.claude"
     },
-    // One-time setup from the README: download tools/stainless and create
+    // One-time setup from the README: create
     // the Python venv with the test dependencies.
     "postCreateCommand": "bash .devcontainer/post-create.sh",
     "customizations": {

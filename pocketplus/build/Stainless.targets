@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- GenC wiring: regenerate pocketplus.c from PocketImperative.scala. Invokes java directly; no scripts.
+<!-- GenC wiring: regenerate pocketplus.c from PocketImperative.scala, with the genc task of the sbt project.
      (Verification is a pytest test now — see python/tests/test_verify.py — not a build step.) -->
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
 
@@ -12,8 +12,8 @@
           Outputs="$(GenCSource);$(GenCHeader)">
     <MakeDir Directories="$(GenCDir)" />
     <Message Importance="high" Text="[GenC] PocketImperative.scala -&gt; pocketplus.c" />
-    <Exec WorkingDirectory="$(RepoRoot)"
-          Command="&quot;$(JavaExe)&quot; $(JvmArgs) -jar &quot;$(StainlessJar)&quot; --config-file=false --genc --skip-verification --genc-output=&quot;$(GenCSource)&quot; &quot;$(ScalaSource)&quot; &quot;$(BitArraySource)&quot; &quot;$(UtilsSource)&quot;" />
+    <!-- genc writes $(GenCSource) and $(GenCHeader) -->
+    <Exec WorkingDirectory="$(ScalaDir)" Command="sbt --batch genc" />
     <Error Condition="!Exists('$(GenCSource)')" Text="GenC did not produce $(GenCSource)" />
   </Target>
 

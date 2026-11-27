@@ -22,8 +22,8 @@ native/build/
 native/generated/pocketplus.c
 native/generated/pocketplus.h
 
-# --- Stainless distribution (downloaded by install.sh) ---
-/tools/stainless/
+# --- z3 and cvc5 (downloaded by install_solvers.sh) ---
+/tools/
 
 # --- Stainless verification artifacts ---
 build/.stainless-cache/
