@@ -12,7 +12,8 @@ import stainless.lang.StaticChecks.*
   *
   * Nothing here refers to the implementation: the lemmas about its own ghost definitions (the prefix of a bit
   * array, the encoding left to write) are next to these definitions in PocketImperative.scala. So the
-  * implementation depends on this file and on the specification, and this file on the specification only.
+  * implementation depends on this file and on the specification, and this file only on the specification and
+  * on the lemmas about machine integers of datastructure/Utils.scala.
   */
 object PocketExecSpecLemmas {
   import BasicEncodingFunctions.*

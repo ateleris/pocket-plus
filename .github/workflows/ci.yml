@@ -45,7 +45,8 @@ jobs:
       # native/generated/ is committed so that each commit shows how the C changes, and the build only
       # runs GenC when the Scala is newer than the C, which a fresh checkout does not tell. Regenerate
       # here, so that GenC is exercised and a commit that forgot to regenerate fails.
-      # Linux-only (one OS gives enough signal; the others build the committed C).
+      # Linux-only: one OS gives enough signal. On the others, the build regenerates the C or uses the
+      # committed one, depending on the file times the checkout happens to write.
       - name: Check that the committed generated C is up to date
         if: runner.os == 'Linux'
         run: |

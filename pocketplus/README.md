@@ -113,8 +113,8 @@ env/bin/python -m pytest -m verify         # Stainless verification gate (slow)
   only: a 32-bit `.so` cannot be loaded by the 64-bit CPython the `pytest` suite runs under, and
   Ubuntu no longer packages an i386 CPython, so running the suite against a 32-bit build needs an
   i386 container. The codec itself is word-size agnostic — every value in the generated code and
-  the shim is `int32_t`/`uint8_t`/`bool`, and the ctypes binding passes only opaque handles, byte
-  buffers and `int32_t`/`bool` scalars, never a struct layout.
+  the shim is `int32_t`/`uint16_t`/`uint8_t`/`bool`, and the ctypes binding passes only opaque
+  handles, byte buffers and `int32_t`/`bool` scalars, never a struct layout.
 - The verification gate is **red by design today**: the Scala carries no verification invariants yet,
   so the array-bounds / overflow / termination VCs are unproven. It turns green as invariants are added.
 - To regenerate or verify outside VS, the same `java -jar tools/stainless/lib/...jar` invocations
