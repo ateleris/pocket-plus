@@ -29,7 +29,7 @@ env:
 jobs:
   unit:
     name: unit (framework tests)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     defaults:
       run:
         working-directory: pocketbench
@@ -58,7 +58,7 @@ jobs:
 
   integration:
     name: integration (build + validate, all real impls)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     defaults:
       run:
         working-directory: pocketbench

@@ -11,7 +11,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: [self-hosted, linux, x64]
           - os: macos-latest # arm64
           - os: macos-15-intel # x86_64; label available until Aug 2027
           - os: windows-latest

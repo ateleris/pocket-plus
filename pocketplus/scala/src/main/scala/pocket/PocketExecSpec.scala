@@ -642,6 +642,7 @@ object EncodeDecodeRoundTripProof {
     lemmaNotReverse(not(m))
     lemmaNotNot(m)
     ListSpecs.reverseReverse(m)
+    ()
   }.ensuring(_ => not(not(m).reverse).reverse == m)
 
   /** maskFromDiff inverts `xor(m, leftShift(m))`. */
@@ -979,6 +980,7 @@ object EncodeDecodeRoundTripProof {
 
     lemmaDecodeFields(st, it, mt, xt, yt, vt, et, kt, ct, dt, ft, rt, qt, ut, selector)
     ListUtils.lemmaPacketAssoc(rle, vtBits, et, kt, ct, List(dt), qt, ut)
+    ()
   }.ensuring(_ => {
     val res = Encoder.outputVector(params, it, pt, ft, rt, robustnessT)
     Decoder.decodeOutputVector(decoderView(params), res._1) == Some((it, res._3))
@@ -1906,6 +1908,7 @@ object ListUtils {
     ListSpecs.appendAssoc(a ++ b ++ c, d, e ++ (f ++ (g ++ h)))
     ListSpecs.appendAssoc(a ++ b, c, d ++ (e ++ (f ++ (g ++ h))))
     ListSpecs.appendAssoc(a, b, c ++ (d ++ (e ++ (f ++ (g ++ h)))))
+    ()
   }.ensuring(_ => a ++ b ++ c ++ d ++ e ++ f ++ g ++ h == a ++ (b ++ (c ++ (d ++ (e ++ (f ++ (g ++ h)))))))
 
   @ghost @inlineOnce @opaque
