@@ -76,10 +76,14 @@ jobs:
           ref: ${{ env.CCSDS124_REF }}
           path: pocketbench/implementations/ccsds124
 
-      - name: Install C/C++ toolchain
+      - name: Check C/C++ toolchain
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential
+          for tool in gcc g++ make; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "::error::$tool is required on the self-hosted runner"
+              exit 1
+            fi
+          done
 
       - name: Install Rust (edition 2024 crates need >= 1.85)
         uses: dtolnay/rust-toolchain@stable
