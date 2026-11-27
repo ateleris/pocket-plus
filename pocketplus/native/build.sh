@@ -5,6 +5,9 @@
 # native/build/libpocketplus.{dylib,so}.
 set -euo pipefail
 
+export LC_ALL=C.UTF-8
+export LANG=C.UTF-8
+
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(dirname "$here")"
 
