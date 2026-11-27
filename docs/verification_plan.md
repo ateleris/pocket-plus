@@ -181,10 +181,10 @@ case class EncoderState(
     mask: BitArray,                    // M_{t-1}
     build: BitArray,                   // B_{t-1}
     changeHistory: BitArray,           // D_{t-1} .. D_{t-7}: ring buffer of HistoryVectors slots of Layout.bitsPerSlot(f) bits, newest at historyHead
-    changeHistoryZero: Array[Boolean], // per slot: the stored vector is all zero (Z_t of green book 5.3.1.2)
+    var changeHistoryZero: UByte,      // bit k is set when the vector stored in slot k is all zero (Z_t of green book 5.3.1.2); bit 7 stays clear
     var historyHead: Int,
     var zeroRunBeyond: Int,            // consecutive all-zero D older than the stored ones, saturating at 8
-    var newMaskHistory: Int,           // p_{t-1} .. p_{t-15} in the low 15 bits
+    var newMaskHistory: UShort,        // p_{t-1} .. p_{t-16}, newest in bit 0; the definitions read at most the 15 newest
     xt: BitArray,                      // scratch: X_t
     yt: BitArray                       // scratch: y_t and bit extractions
 ) {
@@ -202,10 +202,9 @@ lastInput.valid && lastInput.size == f &&
 mask.valid && mask.size == f &&
 build.valid && build.size == f &&
 changeHistory.valid && changeHistory.size == Layout.HistoryVectors * Layout.bitsPerSlot(f) &&
-changeHistoryZero.length == Layout.HistoryVectors &&
+changeHistoryZero <= Layout.AllSlotsZero &&
 0 <= historyHead && historyHead < Layout.HistoryVectors &&
 0 <= zeroRunBeyond && zeroRunBeyond <= 8 &&
-0 <= newMaskHistory && newMaskHistory < 32768 &&
 xt.valid && xt.size == f &&
 yt.valid && yt.size == f
 ```
@@ -252,10 +251,10 @@ Encoder, `CompressionState` against `EncoderState`:
 | `t: BigInt`, exact | `t: Int`, saturating at 16 | `min(t, 16)` agree; the definitions only read `t == 0`, `t <= R_t` and `min(t, 15)` |
 | `f: BigInt` | `f: Int` | equal |
 | `m0: List[Boolean]` | none | only used at t = 0, where `toList(mask) == m0`; not needed afterwards |
-| `pts: List[Boolean]`, previous new-mask flags over the R_t + C_t window | `newMaskHistory: Int`, p_(t-1) .. p_(t-15) in 15 bits | `pts` is a prefix of the 15 bits read newest first |
+| `pts: List[Boolean]`, previous new-mask flags over the R_t + C_t window | `newMaskHistory: UShort`, p_(t-1) .. p_(t-16), newest in bit 0 | `pts` is a prefix of the 15 newest bits, read newest first |
 | `ct: BigInt`, C_t | derived from `changeHistoryZero` and `zeroRunBeyond` | `ct == dts.drop(R_t).takeWhile(isAllZero).size`, computed as the zero flags of the stored slots past the first R_t, plus `zeroRunBeyond` when all of those are zero, capped at `min(t, 15) - R_t` |
 | `itMinusOne`, `btMinusOne`, `mtMinusOne: List[Boolean]` | `lastInput`, `mask`, `build: BitArray` | `toList(lastInput) == itMinusOne`, and likewise for the other two |
-| `dts: List[List[Boolean]]`, the last `min(t, 15)` change vectors, newest first | `changeHistory` (one `BitArray` of 7 slots, ring buffer, newest at `historyHead`), `changeHistoryZero` (7 flags), `zeroRunBeyond` (saturating at 8) | slot `(historyHead - k) mod 7`, the F bits from bit `slot * bitsPerSlot(f)`, holds `dts(k)` for `k < min(7, dts.size)`; `changeHistoryZero(slot) == isAllZero(dts(k))`; `zeroRunBeyond == min(8, dts.drop(7).takeWhile(isAllZero).size)`; the contents of `dts(7..)` are otherwise forgotten |
+| `dts: List[List[Boolean]]`, the last `min(t, 15)` change vectors, newest first | `changeHistory` (one `BitArray` of 7 slots, ring buffer, newest at `historyHead`), `changeHistoryZero` (7 flags, bit `slot` of a `UByte`), `zeroRunBeyond` (saturating at 8) | slot `(historyHead - k) mod 7`, the F bits from bit `slot * bitsPerSlot(f)`, holds `dts(k)` for `k < min(7, dts.size)`; bit `slot` of `changeHistoryZero` is set exactly when `isAllZero(dts(k))`; `zeroRunBeyond == min(8, dts.drop(7).takeWhile(isAllZero).size)`; the contents of `dts(7..)` are otherwise forgotten |
 | none | `xt`, `yt: BitArray` | scratch, unconstrained |
 
 R_t and the flags p_t, f_t, r_t are inputs of the step on both sides and appear in neither state. The history above serves any R_t in 0..7: X_t reads at most the 7 stored vectors, and C_t only needs their zero flags and `zeroRunBeyond`.
