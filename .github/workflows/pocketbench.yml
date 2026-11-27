@@ -58,7 +58,7 @@ jobs:
 
   integration:
     name: integration (build + validate, all real impls)
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: pocketbench
