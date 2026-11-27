@@ -49,12 +49,18 @@ jobs:
       - name: Sync dependencies
         run: uv sync
 
+      # The Scala compiler for pocketplus-scala and the scala-identity plumbing fixture.
+      - uses: ./.github/actions/setup-stainless
+        with:
+          platform: linux
+
       # No ccsds124 checkout in this job, so everything that needs it skips rather than fails: the
       # reference-* adapters resolve their `source` under ${ccsds124_root}, and the reference
       # datasets come from the same place. The mock contract tests and pocketrust still run.
-      # pocketplus needs Java + Stainless to generate its gitignored GenC source; not installed here.
+      # pocketplus (GenC) is left out until PocketImperative.scala has real bodies; the -k
+      # expression keeps pocketplus-scala.
       - name: Run framework tests
-        run: uv run python -m pytest -k "not pocketplus"
+        run: uv run python -m pytest -k "not pocketplus or pocketplus-scala"
 
   integration:
     name: integration (build + validate, all real impls)
@@ -93,10 +99,15 @@ jobs:
       - name: Sync dependencies
         run: uv sync
 
+      - uses: ./.github/actions/setup-stainless
+        with:
+          platform: linux
+
       # Every adapter except pocketplus, for the reason given in the unit job.
       - name: Build adapters
         run: uv run pocket-bench build -c config/ci.toml
              --impl reference-c --impl reference-cpp --impl pocketrust-u32 --impl pocketrust-u64
+             --impl pocketplus-scala
 
       # Split by capability so the gate is one every impl can meet: reference-cpp (compile-time
       # SUPPORTED_SIZES) rejects the sub-byte-F datasets, which the unit job asserts instead.
@@ -106,9 +117,21 @@ jobs:
       - name: Validate reference-c + pocketrust-u32 + pocketrust-u64 (every dataset)
         run: uv run pocket-bench validate -c config/ci.toml
              --impl reference-c --impl pocketrust-u32 --impl pocketrust-u64
+             --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Validate reference-cpp (byte-aligned vectors)
         run: uv run pocket-bench validate -c config/ci.toml
              --impl reference-cpp
              --dataset reference-simple --dataset reference-hiro --dataset reference-edge-cases
              --dataset reference-housekeeping --dataset reference-venus-express
+             --summary "$GITHUB_STEP_SUMMARY"
+
+      # pocketplus-scala runs the functional specification, which is quadratic in F and takes
+      # about 15 ms per 720-bit packet, so it gets the datasets that finish in seconds.
+      # reference-c is there for the cross-impl check.
+      - name: Validate pocketplus-scala (small datasets)
+        run: uv run pocket-bench validate -c config/ci.toml
+             --impl pocketplus-scala --impl reference-c
+             --dataset reference-simple --dataset reference-hiro --dataset reference-edge-cases
+             --dataset synthetic-f1
+             --summary "$GITHUB_STEP_SUMMARY"

@@ -38,22 +38,31 @@ class Spec:
     unsupported_packet_bits: int | None = None
     # Its codec's own error at the production packet size; None when it round-trips there.
     production_error: str | None = None
+    # Why the production packet size is not run; None when it is.
+    production_skip: str | None = None
+    # Its adapter refuses input outside the codec's verified domain, so the codec never sees it.
+    adapter_guards: bool = False
+    # Its codec encodes R_t > 7, or f_t / r_t cleared while t <= R_t, instead of rejecting it.
+    encodes_invalid_flags: bool = False
 
 
 ADAPTERS = [
     Spec("reference-c", "-O3", "CCSDS124_MAX_PACKET_LENGTH=", sub_byte_f=True,
-         uab_encoder_matches=True, uab_decoder_matches=True),
+         uab_encoder_matches=True, uab_decoder_matches=True, encodes_invalid_flags=True),
     Spec("reference-cpp", "-O3", "720-bit", sub_byte_f=False,
          uab_encoder_matches=False, uab_decoder_matches=False, unsupported_packet_bits=512,
          # count_encode emits the run-length suffix in one append_value capped at 24 bits, so a
          # zero run of 32769 bits or more is InvalidArg.
-         production_error="stopped: codec error -1"),
+         production_error="stopped: codec error -1", encodes_invalid_flags=True),
     Spec("pocketrust-u32", "32-bit blocks", "65535", sub_byte_f=True,
          uab_encoder_matches=True, uab_decoder_matches=True),
     Spec("pocketrust-u64", "64-bit blocks", "65535", sub_byte_f=True,
          uab_encoder_matches=True, uab_decoder_matches=True),
     Spec("pocketplus", "-O3", "bool-per-bit", sub_byte_f=True,
          uab_encoder_matches=True, uab_decoder_matches=False),
+    Spec("pocketplus-scala", "JVM", "functional specification", sub_byte_f=True,
+         uab_encoder_matches=True, uab_decoder_matches=False,
+         production_skip="the specification is quadratic in F on the JVM", adapter_guards=True),
 ]
 
 # Named ids so `-k reference-c` selects one adapter's rows.
@@ -218,6 +227,8 @@ PRODUCTION_PACKET_BYTES = 4114
 
 @impl
 def test_round_trip_at_the_production_packet_size(spec, tmp_path):
+    if spec.production_skip is not None:
+        pytest.skip(f"{spec.name}: {spec.production_skip}")
     ds = _dataset(tmp_path, _packets(3, packet_bytes=PRODUCTION_PACKET_BYTES),
                   packet_bits=8 * PRODUCTION_PACKET_BYTES)
     if spec.production_error is not None:

@@ -35,8 +35,9 @@ def _mock_prepared() -> Prepared:
     return Prepared(adapter=mock, capabilities=adapter.capabilities(mock))
 
 
+# 0x10 at t = 0 satisfies the init phase for R = 0, so a default vector breaks no input rule.
 def _raw_config(fields: list[bytes], flags: list[int] | None = None, f: int = 16) -> bytes:
-    flags = flags or [0] * len(fields)
+    flags = flags or [0x10] + [0] * (len(fields) - 1)
     body = b"".join(bytes([fl]) + fd for fl, fd in zip(flags, fields))
     return f.to_bytes(4, "big") + bytes((f + 7) // 8) + body
 
@@ -65,7 +66,7 @@ def test_run_counts_a_matching_vector_as_passed(tmp_path):
 def test_run_reports_failing_vectors_and_why(tmp_path):
     data_dir = tmp_path / "data"
     _vector(data_dir, "encoder", "encoder_sequence_0000", _raw_config([b"HE"]))
-    _vector(data_dir, "encoder", "encoder_sequence_0001", _raw_config([b"AB", b"CD"], [0, 0x80]))
+    _vector(data_dir, "encoder", "encoder_sequence_0001", _raw_config([b"AB", b"CD"], [0x10, 0x80]))
     _vector(data_dir, "encoder", "encoder_sequence_0002", _raw_config([b"HE"]))
     _vector(data_dir, "encoder", "encoder_sequence_0003", _raw_config([b"HE"]))
     manifest = {
@@ -125,7 +126,7 @@ def test_a_crashing_codec_is_one_failed_vector_and_the_sweep_continues(tmp_path)
 
 def _mixed_suite(data_dir: Path) -> dict:
     """Vectors that pass, stop, mismatch and lack a manifest entry, in that order of names."""
-    cases = [([b"HE"], None, b"HE"), ([b"AB", b"CD"], [0, 0x80], b"ABCD"),
+    cases = [([b"HE"], None, b"HE"), ([b"AB", b"CD"], [0x10, 0x80], b"ABCD"),
              ([b"HE"], None, b"XX"), ([b"HE"], None, None)] * 3
     manifest = {}
     for i, (fields, flags, expected) in enumerate(cases):
@@ -158,3 +159,82 @@ def test_a_crash_in_a_parallel_sweep_is_still_one_failed_vector(tmp_path):
     result = conformance.run(p, data_dir=data_dir, manifest=manifest, mode="encoder", jobs=3)
     assert (result.total, result.failed) == (6, 6)
     assert set(result.reasons.values()) == {"crashed: signal 9"}
+
+
+def test_a_failure_names_the_input_rule_and_whether_the_codec_encoded_past_it(tmp_path):
+    data_dir = tmp_path / "data"
+    _vector(data_dir, "encoder", "encoder_sequence_0000", _raw_config([b"HE", b"LL"], [0x10, 0x08]))
+    _vector(data_dir, "encoder", "encoder_sequence_0001", _raw_config([b"HE"], [0x00]))
+    _vector(data_dir, "encoder", "encoder_sequence_0002", _raw_config([b"HE"]))
+    manifest = {
+        "/encoder_output/encoder_sequence_0000.124": _entry(b"HE"),
+        "/encoder_output/encoder_sequence_0001.124": _entry(b"XX"),
+        "/encoder_output/encoder_sequence_0002.124": _entry(b"XX"),
+    }
+    log = tmp_path / "log.txt"
+    result = conformance.run(_mock_prepared(), data_dir=data_dir, manifest=manifest,
+                             mode="encoder", results_file=log)
+
+    assert result.reasons == {
+        "encoder_sequence_0000.124": "mismatch; input invalid at t=1 (R > 7), codec encoded past it",
+        "encoder_sequence_0001.124":
+            "mismatch; input invalid at t=0 (init phase flags (3.3.2)), codec encoded past it",
+        "encoder_sequence_0002.124": "mismatch",
+    }
+    assert result.rules == {
+        "encoder_sequence_0000.124": "R > 7",
+        "encoder_sequence_0001.124": "init phase flags (3.3.2)",
+        "encoder_sequence_0002.124": "no input rule",
+    }
+    assert result.by_rule()[-1] == ("no input rule", 1)
+    assert ("# encoder failures by input rule: 1 R > 7, 1 init phase flags (3.3.2), "
+            "1 no input rule") in log.read_text()
+
+
+def test_a_codec_stopping_before_the_invalid_packet_is_told_apart(tmp_path):
+    data_dir = tmp_path / "data"
+    _vector(data_dir, "encoder", "encoder_sequence_0000",
+            _raw_config([b"AB", b"CD", b"EF"], [0x10, 0x80, 0x08]))
+    manifest = {"/encoder_output/encoder_sequence_0000.124": _entry(b"ABCD")}
+    result = conformance.run(_mock_prepared(), data_dir=data_dir, manifest=manifest, mode="encoder")
+    assert result.reasons["encoder_sequence_0000.124"].endswith(
+        "; input invalid at t=2 (R > 7), codec stopped at t=1, before it")
+
+
+def test_rule_counts_cover_only_encoder_failures_in_a_both_mode_run(tmp_path):
+    data_dir = tmp_path / "data"
+    _vector(data_dir, "encoder", "encoder_sequence_0000", _raw_config([b"HE", b"LL"], [0x10, 0x08]))
+    _vector(data_dir, "decoder", "decoder_sequence_00000",
+            b"\x00" + (16).to_bytes(4, "big") + b"\xaa\xbb")
+    manifest = {
+        "/encoder_output/encoder_sequence_0000.124": _entry(b"HE"),
+        "/decoder_output/decoder_sequence_00000.raw+large_f": _entry(b"XX"),
+    }
+    result = conformance.run(_mock_prepared(), data_dir=data_dir, manifest=manifest, mode="both")
+    assert result.failed == 2
+    assert result.by_rule() == [("R > 7", 1), ("no input rule", 0)]
+
+
+def test_a_crash_on_an_invalid_input_names_the_rule_without_an_outcome(tmp_path):
+    data_dir = tmp_path / "data"
+    _vector(data_dir, "encoder", "encoder_sequence_0000", _raw_config([b"HE"], [0x1f]))
+    p = Prepared(adapter=scripted_adapter(tmp_path, "os.kill(os.getpid(), 6)"),
+                 capabilities=adapter.Capabilities())
+    manifest = {"/encoder_output/encoder_sequence_0000.124": _entry(b"")}
+    result = conformance.run(p, data_dir=data_dir, manifest=manifest, mode="encoder")
+    assert result.reasons == {
+        "encoder_sequence_0000.124": "crashed: signal 6; input invalid at t=0 (R > 7)",
+    }
+
+
+def test_decoder_failures_name_no_input_rule(tmp_path):
+    data_dir = tmp_path / "data"
+    _vector(data_dir, "decoder", "decoder_sequence_00000",
+            b"\x00" + (16).to_bytes(4, "big") + b"\xaa\xbb")
+    manifest = {"/decoder_output/decoder_sequence_00000.raw+large_f": _entry(b"XX")}
+    log = tmp_path / "log.txt"
+    result = conformance.run(_mock_prepared(), data_dir=data_dir, manifest=manifest, mode="decoder",
+                             results_file=log)
+    assert result.reasons == {"decoder_sequence_00000.raw+large_f": "mismatch"}
+    assert result.rules == {} and result.by_rule() == []
+    assert "input rule" not in log.read_text()

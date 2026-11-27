@@ -12,7 +12,10 @@ this one: the `ccsds124` reference repo is an external checkout reached through 
 `ccsds124_root` setting, and the RHEA-internal `pocketrust` and `pocketplus` are the sibling folders
 `../pocketrust` and `../pocketplus` of the enclosing pocket-plus repo. pocketrust runs as two
 adapters, `pocketrust-u32` and `pocketrust-u64`, one per block width (its `block32` / `block64`
-features); both build the one adapter crate in `adapters/pocketrust/`.
+features); both build the one adapter crate in `adapters/pocketrust/`. pocketplus also runs as two
+adapters: `pocketplus`, the C that Stainless GenC generates, and `pocketplus-scala`, its functional
+specification (`PocketExecSpec.scala`) run on the JVM. Both need Java and the Stainless install from
+`../pocketplus/install.sh`.
 
 ## Quick start
 
@@ -151,7 +154,9 @@ with explicit output paths:
   equal to the reference packet when one exists.
 
 Every implementation goes through every check. The command exits non-zero if any check fails,
-so it doubles as a CI gate.
+so it doubles as a CI gate. `--summary <file>` also appends the results as a markdown
+dataset x implementation matrix; CI passes `$GITHUB_STEP_SUMMARY`, and the pytest run writes its
+counts, failures and grouped skip reasons there too, so both show on the workflow run's page.
 
 Run `validate` before trusting `bench` numbers: the benchmark measures speed only and would happily
 report a fast but incorrect codec.

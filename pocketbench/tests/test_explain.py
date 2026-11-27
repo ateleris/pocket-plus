@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from pocketbench.encoder_rules import RULE_R, Violation
 from pocketbench.explain import (
     STATUS_DECODED,
     STATUS_LOST,
@@ -335,6 +336,26 @@ def test_encoder_result_says_no_packet_attribution():
     assert "no packet attribution" in text
 
 
+def test_encoder_result_locates_the_invalid_input_packet():
+    r = build_result(
+        impl="mock", vector="encoder_sequence_0000.124", phase="encoder", ran=True, returncode=0,
+        stderr="", expected=b"\x01\x02", actual=b"\x01\x02\x03",
+        violation=Violation(2, RULE_R), packets_out=3,
+    )
+    assert (
+        "  input invalid at t=2 (R > 7), so the expected output holds packets 0..1; "
+        "adapter emitted 3 packets: codec encoded past it"
+    ) in summary_lines(r)
+
+
+def test_a_crash_on_an_invalid_input_still_names_the_rule():
+    r = build_result(
+        impl="mock", vector="encoder_sequence_0000.124", phase="encoder", ran=False,
+        returncode=-6, stderr="", expected=b"", actual=b"", violation=Violation(0, RULE_R),
+    )
+    assert "  input invalid at t=0 (R > 7), so the expected output is empty" in summary_lines(r)
+
+
 def test_empty_expected_output_is_reported():
     r = _result(b"", b"\x01\x02", phase="encoder")
     assert "expected empty output, got 2 B" in "\n".join(summary_lines(r))
@@ -477,3 +498,15 @@ def test_api_explain_reports_why_a_run_stopped(tmp_path):
     (r,) = run.results
     assert r.ran and not r.identical
     assert "stopped: input not representable by this codec's API" in run.summary()
+
+
+def test_api_explain_names_the_broken_input_rule(tmp_path):
+    data = tmp_path / "suite"
+    for sub in ("encoder_input", "encoder_output"):
+        (data / sub).mkdir(parents=True)
+    vector = (16).to_bytes(4, "big") + bytes(2) + b"\x10HE" + b"\x08LL"
+    (data / "encoder_input" / "encoder_sequence_0009.raw+config").write_bytes(vector)
+    (data / "encoder_output" / "encoder_sequence_0009.124").write_bytes(b"HE")
+    (r,) = _pb(tmp_path, data).explain("encoder_sequence_0009", build=False).results
+    assert r.violation == Violation(1, RULE_R) and r.packets_out == 2
+    assert "adapter emitted 2 packets: codec encoded past it" in "\n".join(summary_lines(r))

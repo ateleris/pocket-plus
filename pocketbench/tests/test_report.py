@@ -6,6 +6,7 @@ from rich.console import Console
 
 from pocketbench import report
 from pocketbench.benchmark import BenchMetrics, BuildInfo
+from pocketbench.validate import ValidationResult
 
 
 def _metric(impl: str, packets_per_sec: float, *, operation="compress", vector="simple",
@@ -194,3 +195,18 @@ def test_json_records_the_time_budget(tmp_path):
     path = report.write_json([_metric("pocketrust", 900)], {}, [], 100, tmp_path, time_budget=2.0)
     payload = json.loads(path.read_text())
     assert (payload["iterations"], payload["time_budget"]) == (100, 2.0)
+
+
+def test_validation_markdown_is_a_dataset_by_impl_matrix():
+    md = report.validation_markdown([
+        ValidationResult("impl-a", "set-1", "reference", True),
+        ValidationResult("impl-a", "set-1", "round-trip", True),
+        ValidationResult("impl-b", "set-1", "compress", False, "stopped: codec error 3"),
+        ValidationResult("*", "set-1", "cross-impl", True, "1 impls match"),
+        ValidationResult("impl-a", "set-2", "round-trip", False, "2 | 5 packets not decoded"),
+    ])
+    lines = md.splitlines()
+    assert lines[0] == "### Validation: 3 of 5 checks passed"
+    assert lines[2] == "| Dataset | impl-a | impl-b | cross-impl |"
+    assert lines[4] == "| set-1 | pass | **FAIL** compress: stopped: codec error 3 | pass |"
+    assert lines[5] == "| set-2 | **FAIL** round-trip: 2 \\| 5 packets not decoded | - | - |"

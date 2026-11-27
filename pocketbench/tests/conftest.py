@@ -1,6 +1,8 @@
 """Shared fixtures for adapter tests that build a real wrapper."""
 
+import os
 import tomllib
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -79,3 +81,39 @@ def built_adapter(name: str) -> DiscoveredAdapter:
         _BUILT[name] = _built(name, None)
     return _BUILT[name]
 
+
+
+def _skip_reason(report) -> str:
+    reason = report.longrepr[2] if isinstance(report.longrepr, tuple) else str(report.longrepr)
+    return reason.removeprefix("Skipped: ")
+
+
+def _failure_message(report) -> str:
+    crash = getattr(report.longrepr, "reprcrash", None)
+    text = crash.message if crash else str(report.longrepr)
+    return text.splitlines()[0].replace("|", "\\|")[:200] if text else ""
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    """Counts, failures and grouped skip reasons on the GitHub Actions job page."""
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not path:
+        return
+    stats = terminalreporter.stats
+    failed = [r for key in ("failed", "error") for r in stats.get(key, [])]
+    skipped = Counter(_skip_reason(r) for r in stats.get("skipped", []))
+    counts = [f"{len(stats.get('passed', []))} passed", f"{len(failed)} failed",
+              f"{sum(skipped.values())} skipped", f"{len(stats.get('deselected', []))} deselected"]
+    lines = [f"### pytest: {', '.join(counts)}", ""]
+    if config.option.keyword:
+        lines += [f"Selected with `-k \"{config.option.keyword}\"`.", ""]
+    if failed:
+        lines += ["| Failed | Error |", "|---|---|"]
+        lines += [f"| `{r.nodeid}` | {_failure_message(r)} |" for r in failed]
+        lines.append("")
+    if skipped:
+        lines += ["| Skipped | Reason |", "|---|---|"]
+        lines += [f"| {n} | {reason.replace('|', '\\|')} |" for reason, n in skipped.most_common()]
+        lines.append("")
+    with open(path, "a") as fh:
+        fh.write("\n".join(lines) + "\n")

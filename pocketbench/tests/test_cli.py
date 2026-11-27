@@ -9,9 +9,10 @@ import pytest
 from typer.testing import CliRunner
 
 from pocketbench import cli
-from pocketbench.api import BenchRun, PocketBenchError, SweepRun
+from pocketbench.api import BenchRun, PocketBenchError, SweepRun, ValidationRun
 from pocketbench.benchmark import BenchMetrics
 from pocketbench.sweep import SweepResult
+from pocketbench.validate import ValidationResult
 
 # Typer forces colored output when GITHUB_ACTIONS / FORCE_COLOR is set, splitting matched text.
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -61,6 +62,12 @@ class _CannedBench:
         results = [row("corpus-a", 0, 40), row("corpus-b", 0, 20),
                    row("corpus-a", 1, 80), row("corpus-b", 1, None)]
         return SweepRun(results=results, parameters={}, environment={})
+
+    def validate(self, impls, datasets, **kwargs):
+        return ValidationRun(results=[
+            ValidationResult("impl-a", "set-1", "round-trip", True),
+            ValidationResult("impl-b", "set-1", "round-trip", False, "1 of 2 packets not decoded"),
+        ])
 
     def write_report(self, run):
         if isinstance(run, SweepRun):
@@ -149,3 +156,14 @@ def test_sweep_verbose_lists_every_dataset(monkeypatch):
 )
 def test_sweep_usage_errors_exit_2(monkeypatch, flags):
     _sweep(monkeypatch, *flags, exit_code=2)
+
+
+def test_validate_appends_a_markdown_summary(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "_load", lambda config: _CannedBench())
+    summary = tmp_path / "summary.md"
+    summary.write_text("earlier step\n")
+    result = CliRunner().invoke(cli.app, ["validate", "--summary", str(summary)])
+    assert result.exit_code == 1, result.output
+    text = summary.read_text()
+    assert text.startswith("earlier step\n### Validation: 1 of 2 checks passed")
+    assert "**FAIL** round-trip: 1 of 2 packets not decoded" in text
