@@ -31,6 +31,8 @@ FILES_TO_VERIFY = [
     # os.path.join(SCALA_DIR, "PocketPlus.scala"),
     os.path.join(SCALA_SOURCE_FILES_DIR, "PocketExecSpec.scala"),
     os.path.join(SCALA_SOURCE_FILES_DIR, "PocketImperative.scala"),
+    os.path.join(SCALA_SOURCE_FILES_DIR, "PocketExecSpecLemmas.scala"),
+    os.path.join(SCALA_SOURCE_FILES_DIR, "ListLemmas.scala"),
     os.path.join(SCALA_SOURCE_FILES_DIR, "datastructure", "arrays", "BitArray.scala"),
     os.path.join(SCALA_SOURCE_FILES_DIR, "datastructure", "arrays", "ByteArray.scala"),
     os.path.join(SCALA_SOURCE_FILES_DIR, "datastructure", "arrays", "IntArray.scala"),
@@ -49,6 +51,20 @@ JVM_ARGS = ["-Xss512m", "--sun-misc-unsafe-memory-access=allow", "-Dparallel={}"
 # VC statuses that count as proven; anything else (Invalid, Inconclusive) is unproven.
 _PASSING_STATUSES = {"Valid", "ValidFromCache", "Trivial"}
 
+# With sat-precond (set in stainless.conf), Stainless also looks, for each function, for values that
+# satisfy its preconditions. A precondition that nothing satisfies is reported Invalid and fails the
+# gate like any other VC. The search can also time out, typically on a state with a large invariant:
+# that proves nothing either way, so it is listed in the output without failing the gate.
+_SAT_PRECOND_KIND = "precondition satisfiability"
+
+
+def _status(record: dict) -> str:
+    return next(iter(record["status"]))
+
+
+def _sat_precond_inconclusive(record: dict) -> bool:
+    return record["kind"] == _SAT_PRECOND_KIND and _status(record) == "Inconclusive"
+
 
 def _vc_location(record: dict) -> str:
     pos = record["pos"]
@@ -60,19 +76,21 @@ def _vc_location(record: dict) -> str:
 
 
 def _vc_summary(record: dict) -> str:
-    status = next(iter(record["status"]))
+    status = _status(record)
     detail = next(iter(record["status"].values())).get("reason", "")
     detail = f" ({detail})" if detail else ""
     return f"{_vc_location(record)}: {record['kind']} [{status}]{detail}"
 
 
 def run(files: list[str] | None = None, extra_opts: list[str] | None = None) -> dict:
-    """Run Stainless verification; return {total, valid, invalid, unknown, output, unproven}.
+    """Run Stainless verification; return {total, valid, invalid, unknown, output, unproven,
+    sat_precond_inconclusive}.
 
     `files` defaults to FILES_TO_VERIFY; `extra_opts` are appended to the Stainless command line
     (e.g. to override a setting from stainless.conf for this run). `unproven` lists the VCs that
-    did not verify, for diagnostics. Raises FileNotFoundError if the vendored Stainless jar is
-    missing.
+    did not verify, for diagnostics. `sat_precond_inconclusive` lists the functions whose
+    preconditions Stainless could neither satisfy nor refute; they are not counted in `unknown`.
+    Raises FileNotFoundError if the vendored Stainless jar is missing.
     """
     if not os.path.isfile(JAR):
         raise FileNotFoundError(f"Vendored Stainless jar not found: {JAR}")
@@ -106,26 +124,37 @@ def run(files: list[str] | None = None, extra_opts: list[str] | None = None) -> 
     out = re.sub(r"\x1b\[[0-9;]*m", "", "".join(captured))
 
     if not os.path.isfile(REPORT_JSON):
-        return {"total": 0, "valid": 0, "invalid": 0, "unknown": 0, "output": out, "unproven": ""}
+        return {"total": 0, "valid": 0, "invalid": 0, "unknown": 0, "output": out, "unproven": "",
+                "sat_precond_inconclusive": ""}
 
     with open(REPORT_JSON) as report_file:
         report = json.load(report_file)
         records = next(entry[1][0] for entry in report["stainless"] if entry[0] == "verification")
 
-        valid = sum(1 for r in records if next(iter(r["status"])) in _PASSING_STATUSES)
-        unproven_records = [r for r in records if next(iter(r["status"])) not in _PASSING_STATUSES]
-        invalid = sum(1 for r in unproven_records if next(iter(r["status"])) == "Invalid")
+        valid = sum(1 for r in records if _status(r) in _PASSING_STATUSES)
+        sat_inconclusive = [r for r in records if _sat_precond_inconclusive(r)]
+        unproven_records = [r for r in records
+                            if _status(r) not in _PASSING_STATUSES and not _sat_precond_inconclusive(r)]
+        invalid = sum(1 for r in unproven_records if _status(r) == "Invalid")
         unknown = len(unproven_records) - invalid
 
+        sat_inconclusive_text = "\n".join(_vc_summary(r) for r in sat_inconclusive)
+        if sat_inconclusive:
+            print(f"[verify] preconditions neither satisfied nor refuted ({len(sat_inconclusive)}, "
+                  f"not counted as failures):\n{sat_inconclusive_text}", flush=True)
+
         return {"total": len(records), "valid": valid, "invalid": invalid, "unknown": unknown,
-            "output": out, "unproven": "\n".join(_vc_summary(r) for r in unproven_records)}
+            "output": out, "unproven": "\n".join(_vc_summary(r) for r in unproven_records),
+            "sat_precond_inconclusive": sat_inconclusive_text}
 
 
 def main() -> int:
     files = [a for a in sys.argv[1:] if not a.startswith("-")] or None
     extra_opts = [a for a in sys.argv[1:] if a.startswith("-")]
     r = run(files=files, extra_opts=extra_opts)
-    print(f"[verify] total={r['total']} valid={r['valid']} invalid={r['invalid']} unknown={r['unknown']}")
+    sat_inconclusive = len(r["sat_precond_inconclusive"].splitlines())
+    print(f"[verify] total={r['total']} valid={r['valid']} invalid={r['invalid']} unknown={r['unknown']} "
+          f"sat-precond-inconclusive={sat_inconclusive}")
     if r["total"] == 0:
         print(r["output"][-4000:])
         print("[verify] FAILED: no Stainless summary (extraction error or crash).")

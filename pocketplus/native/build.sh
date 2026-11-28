@@ -15,12 +15,16 @@ jar="$(echo "$repo"/tools/stainless/lib/stainless-dotty-standalone-*.jar)"
 [ -f "$jar" ] || { echo "Stainless jar not found; run ./install.sh first." >&2; exit 1; }
 
 scala_dir="$repo/scala/src/main/scala/pocket"
-# What GenC compiles: the codec, and the bit array it stores its vectors in. Keep this list in sync
-# with build/Stainless.props.
+# What GenC reads: the codec, the bit array it stores its vectors in, and the functional specification
+# and the lemmas, which the codec refers to in its contracts and ghost code (none of them ends up in
+# the C). Keep this list in sync with build/Stainless.props.
 scala_srcs=(
   "$scala_dir/PocketImperative.scala"
   "$scala_dir/datastructure/arrays/BitArray.scala"
   "$scala_dir/datastructure/Utils.scala"
+  "$scala_dir/PocketExecSpec.scala"
+  "$scala_dir/PocketExecSpecLemmas.scala"
+  "$scala_dir/ListLemmas.scala"
 )
 genc_c="$here/generated/pocketplus.c"
 jvm_args="-Xss512m --sun-misc-unsafe-memory-access=allow"

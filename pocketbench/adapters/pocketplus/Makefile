@@ -19,7 +19,8 @@ build/pocketplus.o: $(GENC)
 	@mkdir -p build
 	$(CC) $(CFLAGS) -Dmain=pocketplus_genc_main -c $(GENC) -o build/pocketplus.o
 
-# The generated C is not committed; the codec's own build script owns the GenC invocation.
+# The generated C is committed; the codec's own build script owns the GenC invocation, and is only
+# called when the file is missing or older than the prerequisite.
 $(GENC): $(SOURCE)/scala/src/main/scala/pocket/old/PocketPlus.scala
 	$(NATIVE)/build.sh
 

@@ -34,8 +34,10 @@ Open `pocket-plus.slnx`. The first time, accept VS's prompt to create the virtua
 `python/requirements.txt` (or it is created automatically on first build).
 
 **Build Solution** in **Debug** or **Release**:
-  1. regenerates `native/generated/pocketplus.{c,h}` from `scala/src/main/scala/pocket/PocketImperative.scala` and the
-     `BitArray` it is built on, `scala/src/main/scala/pocket/datastructure/` (only when the Scala changed — incremental),
+  1. regenerates `native/generated/pocketplus.{c,h}` from `scala/src/main/scala/pocket/PocketImperative.scala`, the
+     `BitArray` it is built on (`scala/src/main/scala/pocket/datastructure/`), the specification its contracts
+     refer to (`PocketExecSpec.scala`) and the lemmas of its proofs (`PocketExecSpecLemmas.scala`,
+     `ListLemmas.scala`), only when the Scala changed — incremental,
   2. compiles `pocketplus.dll` with ClangCL,
   3. runs the Python `pytest` interop suite, excluding the slow `verify` test (a failing test fails
      the build).
@@ -51,6 +53,11 @@ exists, then Run/Debug individual tests.
 solvers are set in `scala/stainless.conf`; for a one-off run, `python -m pocketplus.verify --timeout=10`
 passes any Stainless option through. Set `POCKETPLUS_VERIFY_PARALLEL` to change how many VCs are
 checked at once (default 4; CI uses 1, see `verify.py`).
+
+`scala/stainless.conf` also sets `sat-precond`: for each function, Stainless looks for values that
+satisfy its preconditions, so that a contract that nothing can satisfy does not pass as proved. A
+precondition proved unsatisfiable fails the gate. A search that times out proves nothing either way:
+it is listed in the output and does not fail the gate.
 
 ## Build / test (command line, Windows)
 
@@ -88,7 +95,8 @@ env/bin/python -m pytest -m verify         # Stainless verification gate (slow)
   `pp_decompress`, …) is hand-written in `native/src/pp_shim.c` around the entry points of
   `PocketImperative.scala`. It allocates the state buffers once per stream, checks every argument
   before calling the generated code, and takes vectors packed MSB first into bytes. The GenC output
-  in `native/generated/` is never hand-edited.
+  in `native/generated/` is never hand-edited. It is committed, so that each commit shows how the C
+  changes: build before committing a change to the Scala, and commit the regenerated files with it.
 - The C is built as **C99** (`-std=c99 -pedantic` / `/clang:-std=c99`) with warnings as errors:
   `-Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wpointer-arith -Wconversion
   -Werror`, plus `-Wmissing-variable-declarations` where the compiler has it (clang, and gcc from
@@ -105,8 +113,8 @@ env/bin/python -m pytest -m verify         # Stainless verification gate (slow)
   only: a 32-bit `.so` cannot be loaded by the 64-bit CPython the `pytest` suite runs under, and
   Ubuntu no longer packages an i386 CPython, so running the suite against a 32-bit build needs an
   i386 container. The codec itself is word-size agnostic — every value in the generated code and
-  the shim is `int32_t`/`uint8_t`/`bool`, and the ctypes binding passes only opaque handles, byte
-  buffers and `int32_t`/`bool` scalars, never a struct layout.
+  the shim is `int32_t`/`uint16_t`/`uint8_t`/`bool`, and the ctypes binding passes only opaque
+  handles, byte buffers and `int32_t`/`bool` scalars, never a struct layout.
 - The verification gate is **red by design today**: the Scala carries no verification invariants yet,
   so the array-bounds / overflow / termination VCs are unproven. It turns green as invariants are added.
 - To regenerate or verify outside VS, the same `java -jar tools/stainless/lib/...jar` invocations
